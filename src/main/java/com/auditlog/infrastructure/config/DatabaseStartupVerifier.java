@@ -11,22 +11,21 @@ import org.springframework.stereotype.Component;
 @Component
 public class DatabaseStartupVerifier implements ApplicationRunner {
 
-    private static final Logger log = LoggerFactory.getLogger(DatabaseStartupVerifier.class);
+  private static final Logger log = LoggerFactory.getLogger(DatabaseStartupVerifier.class);
 
-    private final DataSource dataSource;
+  private final DataSource dataSource;
 
-    public DatabaseStartupVerifier(DataSource dataSource) {
-        this.dataSource = dataSource;
+  public DatabaseStartupVerifier(DataSource dataSource) {
+    this.dataSource = dataSource;
+  }
+
+  @Override
+  public void run(ApplicationArguments args) throws Exception {
+    try (Connection connection = dataSource.getConnection()) {
+      log.info(
+          "Database connection verified: {} {}",
+          connection.getMetaData().getDatabaseProductName(),
+          connection.getMetaData().getDatabaseProductVersion());
     }
-
-    @Override
-    public void run(ApplicationArguments args) throws Exception {
-        try (Connection connection = dataSource.getConnection()) {
-            log.info(
-                    "Database connection verified: {} {}",
-                    connection.getMetaData().getDatabaseProductName(),
-                    connection.getMetaData().getDatabaseProductVersion()
-            );
-        }
-    }
+  }
 }

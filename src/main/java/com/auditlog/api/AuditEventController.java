@@ -27,68 +27,68 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/audit-events")
 public class AuditEventController {
 
-    private final AuditEventIngestionService ingestionService;
-    private final AuditEventQueryService queryService;
+  private final AuditEventIngestionService ingestionService;
+  private final AuditEventQueryService queryService;
 
-    public AuditEventController(AuditEventIngestionService ingestionService, AuditEventQueryService queryService) {
-        this.ingestionService = ingestionService;
-        this.queryService = queryService;
+  public AuditEventController(
+      AuditEventIngestionService ingestionService, AuditEventQueryService queryService) {
+    this.ingestionService = ingestionService;
+    this.queryService = queryService;
+  }
+
+  @PostMapping
+  public ResponseEntity<Void> create(@Valid @RequestBody CreateAuditEventRequest request) {
+    AuditEvent event = ingestionService.record(request.toCommand());
+    return ResponseEntity.created(URI.create("/audit-events/" + event.id())).build();
+  }
+
+  @GetMapping
+  public List<AuditEventResponse> find(
+      @RequestParam(required = false) String actor,
+      @RequestParam(required = false) String resource,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          Instant from,
+      @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+          Instant to,
+      @RequestParam(defaultValue = "100") int limit,
+      @RequestParam(defaultValue = "0") int offset) {
+    return queryService
+        .find(new AuditEventSearchCriteria(actor, resource, from, to, limit, offset))
+        .stream()
+        .map(AuditEventResponse::fromDomain)
+        .toList();
+  }
+
+  public record CreateAuditEventRequest(
+      @NotBlank String actor,
+      @NotBlank String action,
+      @NotBlank String resource,
+      @NotNull AuditOutcome outcome,
+      Map<String, Object> context) {
+
+    RecordAuditEventCommand toCommand() {
+      return new RecordAuditEventCommand(actor, action, resource, outcome, context);
     }
+  }
 
-    @PostMapping
-    public ResponseEntity<Void> create(@Valid @RequestBody CreateAuditEventRequest request) {
-        AuditEvent event = ingestionService.record(request.toCommand());
-        return ResponseEntity.created(URI.create("/audit-events/" + event.id())).build();
+  public record AuditEventResponse(
+      UUID id,
+      Instant timestamp,
+      String actor,
+      String action,
+      String resource,
+      AuditOutcome outcome,
+      Map<String, Object> context) {
+
+    static AuditEventResponse fromDomain(AuditEvent event) {
+      return new AuditEventResponse(
+          event.id(),
+          event.timestamp(),
+          event.actor(),
+          event.action(),
+          event.resource(),
+          event.outcome(),
+          event.context());
     }
-
-    @GetMapping
-    public List<AuditEventResponse> find(
-            @RequestParam(required = false) String actor,
-            @RequestParam(required = false) String resource,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant from,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant to,
-            @RequestParam(defaultValue = "100") int limit,
-            @RequestParam(defaultValue = "0") int offset
-    ) {
-        return queryService.find(new AuditEventSearchCriteria(actor, resource, from, to, limit, offset))
-                .stream()
-                .map(AuditEventResponse::fromDomain)
-                .toList();
-    }
-
-    public record CreateAuditEventRequest(
-            @NotBlank String actor,
-            @NotBlank String action,
-            @NotBlank String resource,
-            @NotNull AuditOutcome outcome,
-            Map<String, Object> context
-    ) {
-
-        RecordAuditEventCommand toCommand() {
-            return new RecordAuditEventCommand(actor, action, resource, outcome, context);
-        }
-    }
-
-    public record AuditEventResponse(
-            UUID id,
-            Instant timestamp,
-            String actor,
-            String action,
-            String resource,
-            AuditOutcome outcome,
-            Map<String, Object> context
-    ) {
-
-        static AuditEventResponse fromDomain(AuditEvent event) {
-            return new AuditEventResponse(
-                    event.id(),
-                    event.timestamp(),
-                    event.actor(),
-                    event.action(),
-                    event.resource(),
-                    event.outcome(),
-                    event.context()
-            );
-        }
-    }
+  }
 }

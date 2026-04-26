@@ -27,66 +27,67 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers
 class AuditEventPersistenceIntegrationTest {
 
-    @Container
-    private static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+  @Container
+  private static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>("postgres:16-alpine");
 
-    @DynamicPropertySource
-    static void configureDatabase(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
+  @DynamicPropertySource
+  static void configureDatabase(DynamicPropertyRegistry registry) {
+    registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+    registry.add("spring.datasource.username", POSTGRES::getUsername);
+    registry.add("spring.datasource.password", POSTGRES::getPassword);
+  }
+
+  @Autowired private DataSource dataSource;
+
+  @Autowired private AuditEventRepository repository;
+
+  @Autowired private JdbcTemplate jdbcTemplate;
+
+  @Test
+  void connectsToPostgreSqlDatabase() throws Exception {
+    try (var connection = dataSource.getConnection()) {
+      assertThat(connection.isValid(2)).isTrue();
+      assertThat(connection.getMetaData().getDatabaseProductName()).isEqualTo("PostgreSQL");
     }
 
-    @Autowired
-    private DataSource dataSource;
+    assertThat(jdbcTemplate.queryForObject("SELECT 1", Integer.class)).isEqualTo(1);
+  }
 
-    @Autowired
-    private AuditEventRepository repository;
+  @Test
+  void persistedAuditEventCannotBeUpdated() {
+    Clock clock = Clock.fixed(Instant.parse("2026-04-25T12:00:00Z"), ZoneOffset.UTC);
+    AuditEvent event =
+        AuditEvent.record(
+            "service:billing",
+            "invoice.created",
+            "invoice/123",
+            AuditOutcome.SUCCESS,
+            Map.of("traceId", "trace-123"),
+            clock);
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+    repository.save(event);
 
-    @Test
-    void connectsToPostgreSqlDatabase() throws Exception {
-        try (var connection = dataSource.getConnection()) {
-            assertThat(connection.isValid(2)).isTrue();
-            assertThat(connection.getMetaData().getDatabaseProductName()).isEqualTo("PostgreSQL");
-        }
+    assertThatThrownBy(
+            () ->
+                jdbcTemplate.update(
+                    "UPDATE audit_events SET actor = ? WHERE id = ?",
+                    "service:payments",
+                    event.id()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("audit_events records are immutable");
 
-        assertThat(jdbcTemplate.queryForObject("SELECT 1", Integer.class)).isEqualTo(1);
-    }
-
-    @Test
-    void persistedAuditEventCannotBeUpdated() {
-        Clock clock = Clock.fixed(Instant.parse("2026-04-25T12:00:00Z"), ZoneOffset.UTC);
-        AuditEvent event = AuditEvent.record(
-                "service:billing",
-                "invoice.created",
-                "invoice/123",
-                AuditOutcome.SUCCESS,
-                Map.of("traceId", "trace-123"),
-                clock
-        );
-
-        repository.save(event);
-
-        assertThatThrownBy(() -> jdbcTemplate.update(
-                "UPDATE audit_events SET actor = ? WHERE id = ?",
-                "service:payments",
-                event.id()
-        )).isInstanceOf(DataAccessException.class)
-                .hasMessageContaining("audit_events records are immutable");
-
-        assertThat(repository.find(new AuditEventSearchCriteria(null, null, null, null, 10, 0)))
-                .singleElement()
-                .satisfies(persisted -> {
-                    assertThat(persisted.id()).isEqualTo(event.id());
-                    assertThat(persisted.actor()).isEqualTo("service:billing");
-                    assertThat(persisted.action()).isEqualTo("invoice.created");
-                    assertThat(persisted.resource()).isEqualTo("invoice/123");
-                    assertThat(persisted.outcome()).isEqualTo(AuditOutcome.SUCCESS);
-                    assertThat(persisted.timestamp()).isEqualTo(Instant.parse("2026-04-25T12:00:00Z"));
-                    assertThat(persisted.context()).containsEntry("traceId", "trace-123");
-                });
-    }
+    assertThat(repository.find(new AuditEventSearchCriteria(null, null, null, null, 10, 0)))
+        .singleElement()
+        .satisfies(
+            persisted -> {
+              assertThat(persisted.id()).isEqualTo(event.id());
+              assertThat(persisted.actor()).isEqualTo("service:billing");
+              assertThat(persisted.action()).isEqualTo("invoice.created");
+              assertThat(persisted.resource()).isEqualTo("invoice/123");
+              assertThat(persisted.outcome()).isEqualTo(AuditOutcome.SUCCESS);
+              assertThat(persisted.timestamp()).isEqualTo(Instant.parse("2026-04-25T12:00:00Z"));
+              assertThat(persisted.context()).containsEntry("traceId", "trace-123");
+            });
+  }
 }

@@ -5,7 +5,7 @@ import java.util.List;
 
 public interface AuditEventRepository {
 
-    AuditEvent save(AuditEvent event);
+  AuditEvent save(AuditEvent event);
 
-    List<AuditEvent> find(AuditEventSearchCriteria criteria);
+  List<AuditEvent> find(AuditEventSearchCriteria criteria);
 }

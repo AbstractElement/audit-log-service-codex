@@ -11,32 +11,34 @@ import org.junit.jupiter.api.Test;
 
 class AuditEventTest {
 
-    private final Clock clock = Clock.fixed(Instant.parse("2026-04-25T00:00:00Z"), ZoneOffset.UTC);
+  private final Clock clock = Clock.fixed(Instant.parse("2026-04-25T00:00:00Z"), ZoneOffset.UTC);
 
-    @Test
-    void createsEventWithServerTimestamp() {
-        AuditEvent event = AuditEvent.record(
-                "service:billing",
-                "invoice.created",
-                "invoice/123",
-                AuditOutcome.SUCCESS,
-                Map.of("traceId", "abc"),
-                clock
-        );
+  @Test
+  void createsEventWithServerTimestamp() {
+    AuditEvent event =
+        AuditEvent.record(
+            "service:billing",
+            "invoice.created",
+            "invoice/123",
+            AuditOutcome.SUCCESS,
+            Map.of("traceId", "abc"),
+            clock);
 
-        assertThat(event.timestamp()).isEqualTo(Instant.parse("2026-04-25T00:00:00Z"));
-        assertThat(event.context()).containsEntry("traceId", "abc");
-    }
+    assertThat(event.timestamp()).isEqualTo(Instant.parse("2026-04-25T00:00:00Z"));
+    assertThat(event.context()).containsEntry("traceId", "abc");
+  }
 
-    @Test
-    void rejectsAnonymousActor() {
-        assertThatThrownBy(() -> AuditEvent.record(
-                "anonymous",
-                "invoice.created",
-                "invoice/123",
-                AuditOutcome.SUCCESS,
-                Map.of(),
-                clock
-        )).isInstanceOf(IllegalArgumentException.class);
-    }
+  @Test
+  void rejectsAnonymousActor() {
+    assertThatThrownBy(
+            () ->
+                AuditEvent.record(
+                    "anonymous",
+                    "invoice.created",
+                    "invoice/123",
+                    AuditOutcome.SUCCESS,
+                    Map.of(),
+                    clock))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
 }

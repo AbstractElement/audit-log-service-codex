@@ -10,13 +10,14 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class ApplicationServiceConfig {
 
-    @Bean
-    AuditEventIngestionService auditEventIngestionService(AuditEventRepository repository, Clock clock) {
-        return new AuditEventIngestionService(repository, clock);
-    }
+  @Bean
+  AuditEventIngestionService auditEventIngestionService(
+      AuditEventRepository repository, Clock clock) {
+    return new AuditEventIngestionService(repository, clock);
+  }
 
-    @Bean
-    AuditEventQueryService auditEventQueryService(AuditEventRepository repository) {
-        return new AuditEventQueryService(repository);
-    }
+  @Bean
+  AuditEventQueryService auditEventQueryService(AuditEventRepository repository) {
+    return new AuditEventQueryService(repository);
+  }
 }

@@ -5,13 +5,13 @@ import java.util.List;
 
 public class AuditEventQueryService {
 
-    private final AuditEventRepository repository;
+  private final AuditEventRepository repository;
 
-    public AuditEventQueryService(AuditEventRepository repository) {
-        this.repository = repository;
-    }
+  public AuditEventQueryService(AuditEventRepository repository) {
+    this.repository = repository;
+  }
 
-    public List<AuditEvent> find(AuditEventSearchCriteria criteria) {
-        return repository.find(criteria);
-    }
+  public List<AuditEvent> find(AuditEventSearchCriteria criteria) {
+    return repository.find(criteria);
+  }
 }

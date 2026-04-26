@@ -18,79 +18,75 @@ import org.hibernate.type.SqlTypes;
 @Table(name = "audit_events")
 class JpaAuditEventEntity {
 
-    @Id
-    private UUID id;
+  @Id private UUID id;
 
-    @Column(name = "event_timestamp", nullable = false)
-    private Instant timestamp;
+  @Column(name = "event_timestamp", nullable = false)
+  private Instant timestamp;
 
-    @Column(nullable = false)
-    private String actor;
+  @Column(nullable = false)
+  private String actor;
 
-    @Column(nullable = false)
-    private String action;
+  @Column(nullable = false)
+  private String action;
 
-    @Column(nullable = false)
-    private String resource;
+  @Column(nullable = false)
+  private String resource;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private AuditOutcome outcome;
+  @Enumerated(EnumType.STRING)
+  @Column(nullable = false)
+  private AuditOutcome outcome;
 
-    @JdbcTypeCode(SqlTypes.JSON)
-    @Column(nullable = false, columnDefinition = "jsonb")
-    private Map<String, Object> context;
+  @JdbcTypeCode(SqlTypes.JSON)
+  @Column(nullable = false, columnDefinition = "jsonb")
+  private Map<String, Object> context;
 
-    protected JpaAuditEventEntity() {
-    }
+  protected JpaAuditEventEntity() {}
 
-    private JpaAuditEventEntity(
-            UUID id,
-            Instant timestamp,
-            String actor,
-            String action,
-            String resource,
-            AuditOutcome outcome,
-            Map<String, Object> context
-    ) {
-        this.id = id;
-        this.timestamp = timestamp;
-        this.actor = actor;
-        this.action = action;
-        this.resource = resource;
-        this.outcome = outcome;
-        this.context = context;
-    }
+  private JpaAuditEventEntity(
+      UUID id,
+      Instant timestamp,
+      String actor,
+      String action,
+      String resource,
+      AuditOutcome outcome,
+      Map<String, Object> context) {
+    this.id = id;
+    this.timestamp = timestamp;
+    this.actor = actor;
+    this.action = action;
+    this.resource = resource;
+    this.outcome = outcome;
+    this.context = context;
+  }
 
-    static JpaAuditEventEntity fromDomain(AuditEvent event) {
-        return new JpaAuditEventEntity(
-                event.id(),
-                event.timestamp(),
-                event.actor(),
-                event.action(),
-                event.resource(),
-                event.outcome(),
-                event.context()
-        );
-    }
+  static JpaAuditEventEntity fromDomain(AuditEvent event) {
+    return new JpaAuditEventEntity(
+        event.id(),
+        event.timestamp(),
+        event.actor(),
+        event.action(),
+        event.resource(),
+        event.outcome(),
+        event.context());
+  }
 
-    AuditEvent toDomain() {
-        return AuditEvent.rehydrate(id, timestamp, actor, action, resource, outcome, context);
-    }
+  AuditEvent toDomain() {
+    return AuditEvent.rehydrate(id, timestamp, actor, action, resource, outcome, context);
+  }
 
-    UUID id() {
-        return id;
-    }
+  UUID id() {
+    return id;
+  }
 
-    Instant timestamp() {
-        return timestamp;
-    }
+  Instant timestamp() {
+    return timestamp;
+  }
 
-    String actor() {
-        return actor;
-    }
+  String actor() {
+    return actor;
+  }
 
-    String resource() {
-        return resource;
-    }
+  String resource() {
+    return resource;
+  }
 }

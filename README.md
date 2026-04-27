@@ -140,6 +140,12 @@ Current tests cover:
 - Persistence of audit events.
 - Rejection of direct updates to `audit_events`.
 
+Enable the pre-commit hook to run Spotless before every commit:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Documentation
 
 Key files:

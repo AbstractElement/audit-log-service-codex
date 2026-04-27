@@ -1,6 +1,5 @@
 package com.auditlog.application;
 
-import com.auditlog.domain.AuditEvent;
 import java.util.List;
 
 public class AuditEventQueryService {
@@ -11,7 +10,7 @@ public class AuditEventQueryService {
     this.repository = repository;
   }
 
-  public List<AuditEvent> find(AuditEventSearchCriteria criteria) {
-    return repository.find(criteria);
+  public List<AuditEventView> find(AuditEventSearchCriteria criteria) {
+    return repository.find(criteria).stream().map(AuditEventView::fromDomain).toList();
   }
 }

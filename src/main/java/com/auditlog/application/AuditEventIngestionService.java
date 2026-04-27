@@ -1,6 +1,7 @@
 package com.auditlog.application;
 
 import com.auditlog.domain.AuditEvent;
+import com.auditlog.domain.AuditOutcome;
 import java.time.Clock;
 
 public class AuditEventIngestionService {
@@ -13,15 +14,15 @@ public class AuditEventIngestionService {
     this.clock = clock;
   }
 
-  public AuditEvent record(RecordAuditEventCommand command) {
+  public AuditEventView record(RecordAuditEventCommand command) {
     AuditEvent event =
         AuditEvent.record(
             command.actor(),
             command.action(),
             command.resource(),
-            command.outcome(),
+            AuditOutcome.valueOf(command.outcome()),
             command.context(),
             clock);
-    return repository.save(event);
+    return AuditEventView.fromDomain(repository.save(event));
   }
 }

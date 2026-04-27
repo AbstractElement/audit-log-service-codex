@@ -3,12 +3,12 @@ package com.auditlog.api;
 import com.auditlog.application.AuditEventIngestionService;
 import com.auditlog.application.AuditEventQueryService;
 import com.auditlog.application.AuditEventSearchCriteria;
+import com.auditlog.application.AuditEventView;
 import com.auditlog.application.RecordAuditEventCommand;
-import com.auditlog.domain.AuditEvent;
-import com.auditlog.domain.AuditOutcome;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
 import java.net.URI;
 import java.time.Instant;
 import java.util.List;
@@ -38,7 +38,7 @@ public class AuditEventController {
 
   @PostMapping
   public ResponseEntity<Void> create(@Valid @RequestBody CreateAuditEventRequest request) {
-    AuditEvent event = ingestionService.record(request.toCommand());
+    AuditEventView event = ingestionService.record(request.toCommand());
     return ResponseEntity.created(URI.create("/audit-events/" + event.id())).build();
   }
 
@@ -55,7 +55,7 @@ public class AuditEventController {
     return queryService
         .find(new AuditEventSearchCriteria(actor, resource, from, to, limit, offset))
         .stream()
-        .map(AuditEventResponse::fromDomain)
+        .map(AuditEventResponse::fromView)
         .toList();
   }
 
@@ -63,7 +63,7 @@ public class AuditEventController {
       @NotBlank String actor,
       @NotBlank String action,
       @NotBlank String resource,
-      @NotNull AuditOutcome outcome,
+      @NotNull @Pattern(regexp = "SUCCESS|DENIED|ERROR") String outcome,
       Map<String, Object> context) {
 
     RecordAuditEventCommand toCommand() {
@@ -77,10 +77,10 @@ public class AuditEventController {
       String actor,
       String action,
       String resource,
-      AuditOutcome outcome,
+      String outcome,
       Map<String, Object> context) {
 
-    static AuditEventResponse fromDomain(AuditEvent event) {
+    static AuditEventResponse fromView(AuditEventView event) {
       return new AuditEventResponse(
           event.id(),
           event.timestamp(),

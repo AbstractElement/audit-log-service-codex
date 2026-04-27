@@ -39,11 +39,17 @@ jobs:
       - name: Spotless
         run: ./gradlew spotlessCheck
 
-      - name: Test
-        run: ./gradlew test
+      - name: Unit tests
+        run: ./gradlew unitTest
+
+      - name: ArchUnit tests
+        run: ./gradlew archUnitTest
+
+      - name: Integration tests
+        run: ./gradlew integrationTest
 
       - name: Build
-        run: ./gradlew build -x test -x spotlessCheck
+        run: ./gradlew assemble
 
       - name: Upload test reports
         if: failure()

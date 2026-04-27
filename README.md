@@ -100,58 +100,11 @@ Database schema changes live in `src/main/resources/db/migration`. Hibernate val
 
 Package dependencies:
 
-```plantuml
-@startuml
-skinparam componentStyle rectangle
-
-package "com.auditlog.api" as api
-package "com.auditlog.application" as application
-package "com.auditlog.domain" as domain
-package "com.auditlog.infrastructure" as infrastructure
-database "PostgreSQL" as postgres
-
-api --> application : calls use cases
-application --> domain : creates and reads domain model
-application --> application : repository port
-infrastructure --> application : implements repository port
-infrastructure --> domain : maps persistence entities
-infrastructure --> postgres : JPA/Flyway
-
-note right of domain
-  No Spring, JPA, or API dependencies
-end note
-
-note bottom of application
-  Depends inward on domain only
-end note
-@enduml
-```
+![Package dependency diagram](docs/images/package-dependencies.svg)
 
 Audit event storage flow:
 
-```plantuml
-@startuml
-actor Client
-participant "AuditEventController\n(api)" as Controller
-participant "AuditEventIngestionService\n(application)" as Service
-participant "AuditEvent\n(domain)" as Domain
-participant "AuditEventRepository\n(application port)" as Port
-participant "JpaAuditEventRepository\n(infrastructure)" as JpaRepository
-database "PostgreSQL\naudit_events" as Database
-
-Client -> Controller : POST /audit-events
-Controller -> Service : record(command)
-Service -> Domain : record(actor, action, resource,\noutcome, context, serverClock)
-Domain --> Service : AuditEvent with UUID and UTC timestamp
-Service -> Port : save(event)
-Port -> JpaRepository : save(event)
-JpaRepository -> Database : INSERT INTO audit_events
-Database --> JpaRepository : row stored
-JpaRepository --> Service : persisted AuditEvent
-Service --> Controller : AuditEvent
-Controller --> Client : 201 Created
-@enduml
-```
+![Audit event storage flow sequence diagram](docs/images/audit-event-storage-flow.svg)
 
 ## Configuration
 

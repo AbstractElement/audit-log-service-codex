@@ -35,6 +35,38 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+tasks.register<Test>("unitTest") {
+    description = "Runs unit tests."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching("*Test")
+        excludeTestsMatching("*IntegrationTest")
+        excludeTestsMatching("com.auditlog.architecture.*")
+    }
+}
+
+tasks.register<Test>("archUnitTest") {
+    description = "Runs ArchUnit architecture tests."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching("com.auditlog.architecture.*")
+    }
+}
+
+tasks.register<Test>("integrationTest") {
+    description = "Runs integration tests."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+
+    useJUnitPlatform()
+    filter {
+        includeTestsMatching("*IntegrationTest")
+    }
+}
+
 spotless {
     java {
         target("src/**/*.java")

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="760" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
+  <title id="title">Audit event storage flow</title>
+  <desc id="desc">Sequence diagram showing a client posting an audit event, application service creating the server timestamp, repository persisting the event, and the API returning 201 Created.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2937" />
+    </marker>
+    <marker id="arrowReturn" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 10 0 L 0 5 L 10 10 z" fill="#64748b" />
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .head { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 8; }
+      .api { fill: #fdf2f8; stroke: #be185d; }
+      .app { fill: #eff6ff; stroke: #2563eb; }
+      .domain { fill: #ecfdf5; stroke: #047857; }
+      .infra { fill: #fff7ed; stroke: #c2410c; }
+      .db { fill: #f1f5f9; stroke: #475569; }
+      .title { font: 700 22px Arial, sans-serif; fill: #0f172a; }
+      .label { font: 700 14px Arial, sans-serif; fill: #0f172a; }
+      .small { font: 12px Arial, sans-serif; fill: #475569; }
+      .msg { font: 13px Arial, sans-serif; fill: #1f2937; }
+      .life { stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 6 6; }
+      .call { stroke: #1f2937; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .return { stroke: #64748b; stroke-width: 2; stroke-dasharray: 5 5; fill: none; marker-start: url(#arrowReturn); }
+      .activation { fill: #e2e8f0; stroke: #475569; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1120" height="760" />
+  <text class="title" x="40" y="46">Audit Event Storage Flow</text>
+  <text class="small" x="40" y="72">The server creates UUID and UTC timestamp before the event is inserted into PostgreSQL.</text>
+
+  <rect class="head" x="35" y="105" width="115" height="58" />
+  <text class="label" x="72" y="138">Client</text>
+
+  <rect class="head api" x="190" y="98" width="145" height="72" />
+  <text class="label" x="212" y="128">Controller</text>
+  <text class="small" x="217" y="149">api package</text>
+
+  <rect class="head app" x="380" y="98" width="160" height="72" />
+  <text class="label" x="398" y="128">Ingestion service</text>
+  <text class="small" x="411" y="149">application</text>
+
+  <rect class="head domain" x="585" y="98" width="145" height="72" />
+  <text class="label" x="621" y="128">AuditEvent</text>
+  <text class="small" x="628" y="149">domain</text>
+
+  <rect class="head app" x="775" y="98" width="135" height="72" />
+  <text class="label" x="801" y="128">Repository</text>
+  <text class="small" x="807" y="149">port</text>
+
+  <rect class="head infra" x="945" y="98" width="140" height="72" />
+  <text class="label" x="966" y="128">JPA adapter</text>
+  <text class="small" x="977" y="149">infrastructure</text>
+
+  <path class="db" d="M 948 640 C 948 617, 1082 617, 1082 640 L 1082 700 C 1082 723, 948 723, 948 700 Z" />
+  <ellipse class="db" cx="1015" cy="640" rx="67" ry="23" />
+  <text class="label" x="979" y="672">PostgreSQL</text>
+  <text class="small" x="980" y="692">audit_events</text>
+
+  <line class="life" x1="92" y1="163" x2="92" y2="720" />
+  <line class="life" x1="262" y1="170" x2="262" y2="720" />
+  <line class="life" x1="460" y1="170" x2="460" y2="720" />
+  <line class="life" x1="657" y1="170" x2="657" y2="720" />
+  <line class="life" x1="842" y1="170" x2="842" y2="720" />
+  <line class="life" x1="1015" y1="170" x2="1015" y2="617" />
+
+  <rect class="activation" x="257" y="210" width="10" height="458" />
+  <rect class="activation" x="455" y="258" width="10" height="372" />
+  <rect class="activation" x="652" y="310" width="10" height="76" />
+  <rect class="activation" x="837" y="440" width="10" height="116" />
+  <rect class="activation" x="1010" y="500" width="10" height="48" />
+
+  <path class="call" d="M 92 220 L 257 220" />
+  <text class="msg" x="118" y="211">POST /audit-events</text>
+
+  <path class="call" d="M 267 268 L 455 268" />
+  <text class="msg" x="298" y="259">record(command)</text>
+
+  <path class="call" d="M 465 320 L 652 320" />
+  <text class="msg" x="486" y="302">record(actor, action,</text>
+  <text class="msg" x="486" y="318">resource, outcome, context)</text>
+
+  <path class="return" d="M 652 374 L 465 374" />
+  <text class="msg" x="487" y="365">AuditEvent with UUID</text>
+  <text class="msg" x="487" y="381">and UTC timestamp</text>
+
+  <path class="call" d="M 465 450 L 837 450" />
+  <text class="msg" x="580" y="441">save(event)</text>
+
+  <path class="call" d="M 847 510 L 1010 510" />
+  <text class="msg" x="884" y="501">INSERT audit_events</text>
+
+  <path class="return" d="M 1010 548 L 847 548" />
+  <text class="msg" x="900" y="568">row stored</text>
+
+  <path class="return" d="M 837 594 L 465 594" />
+  <text class="msg" x="584" y="615">persisted event view</text>
+
+  <path class="return" d="M 455 640 L 267 640" />
+  <text class="msg" x="329" y="661">AuditEventView</text>
+
+  <path class="return" d="M 257 686 L 92 686" />
+  <text class="msg" x="132" y="708">201 Created</text>
+</svg>

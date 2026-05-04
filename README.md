@@ -140,11 +140,29 @@ Current tests cover:
 - Persistence of audit events.
 - Rejection of direct updates to `audit_events`.
 
-Enable the pre-commit hook to run Spotless before every commit:
+## Contribution Workflow
+
+Do not commit or push directly to `master`. Every task must be done on a dedicated branch and merged through a pull request.
+
+Create a task branch:
+
+```bash
+git switch -c <task-branch>
+```
+
+Push the task branch and open a pull request:
+
+```bash
+git push -u origin <task-branch>
+```
+
+Enable the local hooks to block commits on `master`, block direct pushes to `master`, and run Spotless before every commit:
 
 ```bash
 git config core.hooksPath .githooks
 ```
+
+Repository administrators must also configure GitHub branch protection or a repository ruleset for `master` that blocks direct pushes and requires pull requests before merging. Local hooks are only a developer-side guard.
 
 ## Documentation
 

@@ -1,5 +1,15 @@
 #!/usr/bin/env sh
 set -eu
 
+branch="$(git branch --show-current)"
+
+if [ "$branch" = "master" ]; then
+  cat >&2 <<'MSG'
+Commits directly on master are blocked.
+Create a task branch and open a pull request instead.
+MSG
+  exit 1
+fi
+
 echo "Running Spotless check..."
 ./gradlew spotlessCheck

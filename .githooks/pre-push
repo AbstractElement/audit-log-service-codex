@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+
+protected_branch="master"
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [ "$remote_ref" = "refs/heads/$protected_branch" ]; then
+    cat >&2 <<'MSG'
+Direct pushes to master are blocked.
+Create a task branch and open a pull request instead:
+  git switch -c <task-branch>
+  git push -u origin <task-branch>
+MSG
+    exit 1
+  fi
+done

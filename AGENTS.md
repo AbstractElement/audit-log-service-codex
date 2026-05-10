@@ -1,9 +1,11 @@
 ## Project map
 
-An internal service that receives audit events from other company services and stores them immutably. It is used for compliance, security, and observability purposes. It is accessed by compliance officers, SREs, and security analysts.
+An internal append-only service that receives audit events from other company services and stores them immutably.
+It is used for compliance, security, and observability purposes. It is accessed by compliance officers, SREs, and security analysts.
 
-Stack: Java 21, Spring Boot 3, Gradle Kotlin DSL, PostgreSQL, Flyway, Testcontainers.
-Base package: `com.auditlog`
+- Repo: https://github.com/AbstractElement/audit-log-service-codex
+- Base package: `com.auditlog`
+- Stack: Java 21, Spring Boot 3, Gradle Kotlin DSL, PostgreSQL, Flyway, Testcontainers.
 
 ## Invariants
 
@@ -15,59 +17,34 @@ Base package: `com.auditlog`
 - Make the smallest safe change that satisfies the request; do not modify unrelated code.
 - Run existing tests and lint checks before finishing and make sure that they successfully passed; if not possible, clearly state what was not verified.
 - Never modify AGENTS.md
+- NOTES.md contains history of already performed actions
+- Every new feature should be done in a separate git branch "feature/*" that create from master branch
 
 ## Architecture rules
 
-### 1. DDD-first approach
+### DDD-first approach
 
 - Domain layer has no dependencies on frameworks
 - JPA/Hibernate and API concerns are isolated in Infrastructure/API layers
 - Business rules live in the domain model
 
-### 2. Clean architecture layering
+### Clean architecture layering
 
 - Domain → Application → Infrastructure → API
 - Dependencies only point inward
 
-### 3. Persistence rules
+### Persistence rules
 
 - JPA/Hibernate used only in Infrastructure
 - Schema changes only via Flyway migrations
-- No UPDATE statements allowed on audit_events table
-- No DELETE allowed except via retention/archival process
-- Each event must be immutable after insertion
-- Consider storing hash or checksum for tamper detection
 
-### 4. Read/write separation
-
-- Write model: append-only audit event store
-- Read model: optimized queries for filtering/search
-- CQRS-style separation allowed when needed
-
-### 5. Time consistency
-
-- All timestamps are UTC
-- Server is the single source of truth for time
-
-### 6. Retention & archival
-
-- Background job removes or archives events older than N days
-- Archived data stored separately from active query store
-- DELETE is forbidden for business logic
-- Physical deletion allowed only in retention/archival process
-
-### 7. Observability
-
-- Every write must be traceable (logging + correlation ID recommended)
-- Failures in event ingestion must not be silent
-
-### 8. Testing strategy
+### Testing strategy
 
 - Testcontainers used for real PostgreSQL integration tests
 - Domain logic fully covered by unit tests
 - Critical API flows covered by integration tests
 
-### 9. Layer boundaries (strict)
+### Layer boundaries
 
 - API layer must not access persistence or infrastructure classes directly
 - API interacts only with Application layer (use cases/services)
@@ -76,23 +53,16 @@ Base package: `com.auditlog`
 - Domain must not depend on Spring, JPA, or any external libraries
 - Persistence entities must not be exposed outside Infrastructure
 
-### 10. Ports & adapters
+### Ports & adapters
 
 - All external dependencies (DB, time, messaging, archive) must be accessed via interfaces (ports) defined in Application layer
 - Infrastructure provides implementations of these ports
 - Example: AuditEventRepository is defined in Application, implemented in Infrastructure
 
-### 11. Architecture enforcement
+### Architecture enforcement
 
 - ArchUnit tests must enforce layer boundaries and dependency rules
 - At minimum:
   - API must not depend on Infrastructure
   - Application must not depend on Infrastructure
   - Domain must not depend on Spring or JPA
-
-### 12. Idempotency
-
-- Audit ingestion must handle duplicate events safely
-- Either:
-  - enforce idempotency key, or
-  - tolerate duplicates explicitly (documented behavior)

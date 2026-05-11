@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="880" viewBox="0 0 1120 880" role="img" aria-labelledby="title desc">
+  <title id="title">Audit event query flow</title>
+  <desc id="desc">Sequence diagram showing a client paging GET /audit-events with a cursor: the controller forwards an AuditEventQuery to the query service, which decodes the cursor, calls the repository port whose JPA adapter executes a keyset SELECT with LIMIT N+1, encodes the next cursor from the last kept row, and returns the paginated envelope.</desc>
+  <defs>
+    <marker id="arrowQ" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1f2937" />
+    </marker>
+    <marker id="arrowReturnQ" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b" />
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .head { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 8; }
+      .api { fill: #fdf2f8; stroke: #be185d; }
+      .app { fill: #eff6ff; stroke: #2563eb; }
+      .infra { fill: #fff7ed; stroke: #c2410c; }
+      .db { fill: #f1f5f9; stroke: #475569; }
+      .title { font: 700 22px Arial, sans-serif; fill: #0f172a; }
+      .label { font: 700 14px Arial, sans-serif; fill: #0f172a; }
+      .small { font: 12px Arial, sans-serif; fill: #475569; }
+      .msg { font: 13px Arial, sans-serif; fill: #1f2937; }
+      .life { stroke: #94a3b8; stroke-width: 2; stroke-dasharray: 6 6; }
+      .call { stroke: #1f2937; stroke-width: 2; fill: none; marker-end: url(#arrowQ); }
+      .return { stroke: #64748b; stroke-width: 2; stroke-dasharray: 5 5; fill: none; marker-end: url(#arrowReturnQ); }
+      .activation { fill: #e2e8f0; stroke: #475569; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1120" height="880" />
+  <text class="title" x="40" y="46">Audit Event Query Flow</text>
+  <text class="small" x="40" y="72">Cursor pagination: validate (first page) or decode token (continuation), then keyset SELECT with LIMIT N+1 against audit_events.</text>
+
+  <rect class="head" x="35" y="105" width="115" height="58" />
+  <text class="label" x="72" y="138">Client</text>
+
+  <rect class="head api" x="190" y="98" width="145" height="72" />
+  <text class="label" x="212" y="128">Controller</text>
+  <text class="small" x="217" y="149">api package</text>
+
+  <rect class="head app" x="380" y="98" width="160" height="72" />
+  <text class="label" x="396" y="128">QueryService</text>
+  <text class="small" x="411" y="149">application</text>
+
+  <rect class="head app" x="572" y="98" width="170" height="72" />
+  <text class="label" x="580" y="128">AuditEventCursor</text>
+  <text class="small" x="615" y="149">application</text>
+
+  <rect class="head app" x="775" y="98" width="135" height="72" />
+  <text class="label" x="801" y="128">Repository</text>
+  <text class="small" x="807" y="149">port</text>
+
+  <rect class="head infra" x="945" y="98" width="140" height="72" />
+  <text class="label" x="966" y="128">JPA adapter</text>
+  <text class="small" x="977" y="149">infrastructure</text>
+
+  <path class="db" d="M 948 770 C 948 747, 1082 747, 1082 770 L 1082 830 C 1082 853, 948 853, 948 830 Z" />
+  <ellipse class="db" cx="1015" cy="770" rx="67" ry="23" />
+  <text class="label" x="979" y="802">PostgreSQL</text>
+  <text class="small" x="980" y="822">audit_events</text>
+
+  <line class="life" x1="92"   y1="163" x2="92"   y2="850" />
+  <line class="life" x1="262"  y1="170" x2="262"  y2="850" />
+  <line class="life" x1="460"  y1="170" x2="460"  y2="850" />
+  <line class="life" x1="657"  y1="170" x2="657"  y2="850" />
+  <line class="life" x1="842"  y1="170" x2="842"  y2="850" />
+  <line class="life" x1="1015" y1="170" x2="1015" y2="747" />
+
+  <rect class="activation" x="257"  y="210" width="10" height="570" />
+  <rect class="activation" x="455"  y="260" width="10" height="470" />
+  <rect class="activation" x="652"  y="310" width="10" height="60"  />
+  <rect class="activation" x="652"  y="570" width="10" height="60"  />
+  <rect class="activation" x="837"  y="410" width="10" height="270" />
+  <rect class="activation" x="1010" y="460" width="10" height="220" />
+
+  <path class="call" d="M 92 220 L 257 220" />
+  <text class="msg" x="118" y="211">GET /audit-events?cursor=…&amp;limit=N</text>
+
+  <path class="call" d="M 267 270 L 455 270" />
+  <text class="msg" x="284" y="261">queryPage(AuditEventQuery)</text>
+
+  <path class="call" d="M 465 320 L 652 320" />
+  <text class="msg" x="486" y="311">decode(token)</text>
+
+  <path class="return" d="M 652 366 L 465 366" />
+  <text class="msg" x="486" y="357">(ts, id, actor, resource, from, to, v)</text>
+
+  <path class="call" d="M 465 420 L 837 420" />
+  <text class="msg" x="568" y="411">findPage(query, cursorTs, cursorId)</text>
+
+  <path class="call" d="M 847 470 L 1010 470" />
+  <text class="msg" x="858" y="461">SELECT … LIMIT N+1 (keyset)</text>
+
+  <path class="return" d="M 1010 520 L 847 520" />
+  <text class="msg" x="884" y="511">≤ N+1 rows</text>
+
+  <path class="call" d="M 1010 580 L 662 580" />
+  <text class="msg" x="688" y="571">encode(last kept row) — if hasMore</text>
+
+  <path class="return" d="M 662 624 L 1010 624" />
+  <text class="msg" x="800" y="615">nextCursor token</text>
+
+  <path class="return" d="M 1010 670 L 465 670" />
+  <text class="msg" x="568" y="661">AuditEventPage(items, nextCursor, hasMore)</text>
+
+  <path class="return" d="M 455 720 L 267 720" />
+  <text class="msg" x="298" y="711">AuditEventPage</text>
+
+  <path class="return" d="M 257 770 L 92 770" />
+  <text class="msg" x="118" y="761">200 OK { items, nextCursor, hasMore }</text>
+</svg>

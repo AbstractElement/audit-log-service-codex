@@ -76,7 +76,7 @@ The response is a paginated envelope:
 
 ```json
 {
-  "items": [ /* AuditEventResponse[] */ ],
+  "items": [ ],
   "nextCursor": "eyJ0cyI6Ij…",
   "hasMore": true
 }
@@ -125,6 +125,10 @@ Package dependencies:
 Audit event storage flow:
 
 ![Audit event storage flow sequence diagram](docs/images/audit-event-storage-flow.svg)
+
+Audit event query flow (cursor pagination):
+
+![Audit event query flow sequence diagram](docs/images/audit-event-query-flow.svg)
 
 ## Configuration
 

@@ -1,12 +1,5 @@
 # Audit query by actor/resource — tasks
 
-Decomposition optimised for **safe, reversible commits**: each task is a
-single PR that leaves `master` green (build + unit + integration + ArchUnit
-green), is independently revertible, and changes one concern. New code is
-added *alongside* old code; the old code is removed only after every caller
-has migrated. The Flyway story is split the same way — additive migration
-first, destructive migration last.
-
 References point to specific anchors in
 [requirements.md](./requirements.md) and [design.md](./design.md).
 
@@ -40,11 +33,8 @@ index-bounded. **No drops** in this PR.
 
 **Scope.**
 - New file `src/main/resources/db/migration/V3__add_keyset_indexes.sql`
-  with `CREATE INDEX CONCURRENTLY` for
-  `idx_audit_events_actor_ts_id` and `idx_audit_events_resource_ts_id`.
-- Configure Flyway to run this migration outside a transaction
-  (`spring.flyway.transactional=false` or per-migration directive — see
-  design.md note under *New indexes*).
+  with plain `CREATE INDEX` for `idx_audit_events_actor_ts_id` and
+  `idx_audit_events_resource_ts_id`.
 - Update the existing `AuditEventPersistenceIntegrationTest` only if the
   Testcontainers bootstrap fails on the new migration; otherwise leave it.
 
@@ -266,8 +256,8 @@ in T6 does not require also reverting a schema drop.
 
 **Scope.**
 - New file `src/main/resources/db/migration/V4__drop_legacy_indexes.sql`
-  with `DROP INDEX CONCURRENTLY idx_audit_events_actor_timestamp;`
-  and `DROP INDEX CONCURRENTLY idx_audit_events_resource_timestamp;`.
+  with `DROP INDEX idx_audit_events_actor_timestamp;`
+  and `DROP INDEX idx_audit_events_resource_timestamp;`.
 - Delete `com.auditlog.application.AuditEventSearchCriteria`.
 - Delete `AuditEventRepository.find(AuditEventSearchCriteria)` and its
   JPA implementation.
@@ -357,7 +347,7 @@ the feature merges to `master`.
 
 | # | Task | Reversible by |
 |---|------|---------------|
-| 1 | T1   | `DROP INDEX CONCURRENTLY` of the two new indexes (no schema-shape change). |
+| 1 | T1   | `DROP INDEX` of the two new indexes (no schema-shape change). |
 | 2 | T2   | `git revert` — pure additive code. |
 | 3 | T3   | `git revert` — adds tests + a method on a still-unused record. |
 | 4 | T8   | `git revert` — single ArchUnit rule. |

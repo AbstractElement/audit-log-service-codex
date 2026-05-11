@@ -178,10 +178,10 @@ plans it more reliably against the composite index.
 ### New indexes (Flyway `V3__refine_query_indexes.sql`)
 
 ```sql
-CREATE INDEX CONCURRENTLY idx_audit_events_actor_ts_id
+CREATE INDEX idx_audit_events_actor_ts_id
   ON audit_events (actor, event_timestamp DESC, id DESC);
 
-CREATE INDEX CONCURRENTLY idx_audit_events_resource_ts_id
+CREATE INDEX idx_audit_events_resource_ts_id
   ON audit_events (resource, event_timestamp DESC, id DESC);
 ```
 
@@ -189,16 +189,11 @@ Including `id` as the trailing key column lets the keyset compare be served
 entirely from the index without a heap visit per row to resolve same-instant
 ties — the dominant cost driver for AC-3.1.
 
-`CONCURRENTLY` keeps ingest available during the migration. Flyway must run
-this migration outside a transaction (`-- transactional: false` directive,
-or Spring Flyway property) because `CREATE INDEX CONCURRENTLY` cannot be
-wrapped in a transaction.
-
 ### Indexes to drop
 
 ```sql
-DROP INDEX CONCURRENTLY idx_audit_events_actor_timestamp;
-DROP INDEX CONCURRENTLY idx_audit_events_resource_timestamp;
+DROP INDEX idx_audit_events_actor_timestamp;
+DROP INDEX idx_audit_events_resource_timestamp;
 ```
 
 These are strict key-prefixes of the new indexes; PG will choose the new

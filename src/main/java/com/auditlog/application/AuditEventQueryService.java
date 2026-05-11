@@ -1,7 +1,6 @@
 package com.auditlog.application;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -11,10 +10,6 @@ public class AuditEventQueryService {
 
   public AuditEventQueryService(AuditEventRepository repository) {
     this.repository = repository;
-  }
-
-  public List<AuditEventView> find(AuditEventSearchCriteria criteria) {
-    return repository.find(criteria).stream().map(AuditEventView::fromDomain).toList();
   }
 
   public AuditEventPage queryPage(AuditEventQuery query) {

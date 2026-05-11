@@ -4,15 +4,12 @@ import com.auditlog.application.AuditEventCursor;
 import com.auditlog.application.AuditEventPage;
 import com.auditlog.application.AuditEventQuery;
 import com.auditlog.application.AuditEventRepository;
-import com.auditlog.application.AuditEventSearchCriteria;
 import com.auditlog.application.AuditEventView;
 import com.auditlog.domain.AuditEvent;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.criteria.Predicate;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Repository;
@@ -51,42 +48,6 @@ class JpaAuditEventRepository implements AuditEventRepository {
     var entity = JpaAuditEventEntity.fromDomain(event);
     entityManager.persist(entity);
     return entity.toDomain();
-  }
-
-  @Override
-  @Transactional(readOnly = true)
-  public List<AuditEvent> find(AuditEventSearchCriteria criteria) {
-    var builder = entityManager.getCriteriaBuilder();
-    var query = builder.createQuery(JpaAuditEventEntity.class);
-    var root = query.from(JpaAuditEventEntity.class);
-    var predicates = new ArrayList<Predicate>();
-
-    if (hasText(criteria.actor())) {
-      predicates.add(builder.equal(root.get("actor"), criteria.actor().trim()));
-    }
-    if (hasText(criteria.resource())) {
-      predicates.add(builder.equal(root.get("resource"), criteria.resource().trim()));
-    }
-    if (criteria.from() != null) {
-      predicates.add(builder.greaterThanOrEqualTo(root.get("timestamp"), criteria.from()));
-    }
-    if (criteria.to() != null) {
-      predicates.add(builder.lessThanOrEqualTo(root.get("timestamp"), criteria.to()));
-    }
-
-    query
-        .select(root)
-        .where(predicates.toArray(Predicate[]::new))
-        .orderBy(builder.desc(root.get("timestamp")));
-
-    return entityManager
-        .createQuery(query)
-        .setFirstResult(criteria.offset())
-        .setMaxResults(criteria.limit())
-        .getResultList()
-        .stream()
-        .map(JpaAuditEventEntity::toDomain)
-        .toList();
   }
 
   @Override
@@ -133,9 +94,5 @@ class JpaAuditEventRepository implements AuditEventRepository {
                   AuditEventCursor.V));
     }
     return new AuditEventPage(items, nextCursor, hasMore);
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
   }
 }

@@ -159,11 +159,6 @@ class AuditEventQueryServiceTest {
     }
 
     @Override
-    public List<AuditEvent> find(AuditEventSearchCriteria criteria) {
-      throw new UnsupportedOperationException();
-    }
-
-    @Override
     public AuditEventPage findPage(AuditEventQuery query, Instant cursorTs, UUID cursorId) {
       this.lastQuery = query;
       this.lastCursorTs = cursorTs;

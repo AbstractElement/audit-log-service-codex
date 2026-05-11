@@ -305,44 +305,6 @@ push cursor encoding into the API layer.
 
 ---
 
-## T9 — Performance verification at 50M rows
-
-**Goal.** Discharge AC-3.1 and AC-3.2 with reproducible evidence before
-the feature merges to `master`.
-
-**References.**
-- requirements.md → AC-3.1, AC-3.2; *Open Questions → Performance
-  verification environment*.
-- design.md → *Indexes → Combined `actor + resource` queries*
-  ("must be verified with EXPLAIN ANALYZE against a 50M-row dataset").
-
-**Scope.**
-- Seed-script (one-off, not committed to `src/main`): a small Java or
-  `psql` `\copy` script that loads ~50M synthetic rows into a local PG 16
-  with realistic actor/resource cardinality.
-- Capture `EXPLAIN (ANALYZE, BUFFERS)` for:
-  - actor-only query within a 7-day window;
-  - resource-only query within a 7-day window;
-  - actor + resource query within a 7-day window;
-  - cursor-driven page 10 of each shape.
-- Capture wall-clock p95 over ≥ 1 000 requests for each shape (e.g. with
-  `wrk`, `vegeta`, or a small JMH/JMeter harness).
-- Append the results to `NOTES.md` (per AGENTS.md invariant: NOTES.md
-  records performed actions). Cite the index actually used for each
-  query shape.
-
-**Definition of done.**
-- Each query shape's p95 is documented at ≤ 300ms.
-- `EXPLAIN ANALYZE` for each shape shows an Index Scan / Index Only Scan
-  on `idx_audit_events_actor_ts_id` or `idx_audit_events_resource_ts_id`.
-- If any shape misses the target, file a follow-up issue (do **not**
-  silently merge); recommended remediation is the partial index option
-  from design.md *Combined `actor + resource` queries*.
-
-**Dependencies.** T1 (indexes), T6 (full request path live).
-
----
-
 ## Suggested PR order and rollback notes
 
 | # | Task | Reversible by |
@@ -355,7 +317,6 @@ the feature merges to `master`.
 | 6 | T5   | `git revert` — service method is additive. |
 | 7 | T6   | `git revert` — controller swap; same revert restores the old offset endpoint. |
 | 8 | T7   | `git revert` of the code change + Flyway `V5__restore_legacy_indexes.sql` if the drop has already shipped. |
-| 9 | T9   | N/A — documentation only. |
 
 T8 is slotted before T4–T7 because it's cheap, independent, and protects
 the layer boundary the moment the cursor type exists.

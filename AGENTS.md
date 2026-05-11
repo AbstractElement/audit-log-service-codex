@@ -17,7 +17,7 @@ It is used for compliance, security, and observability purposes. It is accessed 
 - Make the smallest safe change that satisfies the request; do not modify unrelated code.
 - Run existing tests and lint checks before finishing and make sure that they successfully passed; if not possible, clearly state what was not verified.
 - Never modify AGENTS.md
-- NOTES.md contains history of already performed actions
+- Track progress across tasks in NOTES.md
 - Every new feature should be done in a separate git branch "feature/*" that create from master branch
 
 ## Architecture rules

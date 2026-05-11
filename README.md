@@ -12,7 +12,7 @@ The service is built with Java 21, Spring Boot 3, Gradle Kotlin DSL, PostgreSQL,
 - Server-generated UTC timestamps for every event.
 - Required actor, action, resource, and outcome fields.
 - JSONB event context storage.
-- Query endpoint with actor, resource, time range, limit, and offset filters.
+- Query endpoint with actor/resource filters, mandatory time window, and cursor pagination.
 - Flyway-managed database schema.
 - PostgreSQL trigger that rejects updates to `audit_events`.
 - Docker Compose setup for the app and PostgreSQL.
@@ -66,20 +66,40 @@ curl -i -X POST http://localhost:8080/audit-events \
 
 Successful writes return `201 Created` with a `Location` header.
 
-Query audit events:
+Query audit events (first page):
 
 ```bash
-curl 'http://localhost:8080/audit-events?actor=service:billing&resource=invoice/123&limit=50&offset=0'
+curl 'http://localhost:8080/audit-events?actor=service:billing&from=2026-05-01T00:00:00Z&to=2026-05-08T00:00:00Z&limit=100'
+```
+
+The response is a paginated envelope:
+
+```json
+{
+  "items": [ /* AuditEventResponse[] */ ],
+  "nextCursor": "eyJ0cyI6Ij…",
+  "hasMore": true
+}
+```
+
+Fetch the next page by passing the opaque `nextCursor` back; filter params are encoded inside the token and must not be repeated:
+
+```bash
+curl 'http://localhost:8080/audit-events?cursor=eyJ0cyI6Ij…&limit=100'
 ```
 
 Supported query parameters:
 
-- `actor`
-- `resource`
-- `from` as an ISO-8601 timestamp
-- `to` as an ISO-8601 timestamp
-- `limit`, default `100`, maximum `500`
-- `offset`, default `0`
+- `actor` — exact match; at least one of `actor` or `resource` is required on first-page requests.
+- `resource` — exact match.
+- `from` — ISO-8601 UTC timestamp, inclusive. Required on first-page requests.
+- `to` — ISO-8601 UTC timestamp, exclusive. Required on first-page requests. `to - from` must not exceed 7 days.
+- `limit` — default `100`, must be between `1` and `500`.
+- `cursor` — opaque token from a previous response. Mutually exclusive with `actor`/`resource`/`from`/`to`.
+
+Validation failures return HTTP 400 with a JSON body shaped as
+`{ "error": "<code>", "message": "<text>", "field": "<param>" }` (e.g.
+`MISSING_FILTER`, `WINDOW_TOO_LARGE`, `INVALID_TIMESTAMP`, `INVALID_CURSOR`).
 
 Valid outcomes:
 
@@ -92,7 +112,7 @@ Valid outcomes:
 The code follows a DDD-oriented clean architecture structure:
 
 - `domain`: framework-free business model and invariants.
-- `application`: use cases, commands, query criteria, and repository ports.
+- `application`: use cases, commands, query/cursor/page value types, validation, and repository ports.
 - `infrastructure`: Spring configuration, JPA persistence adapter, Flyway migrations, and database startup verification.
 - `api`: REST controllers and HTTP request/response models.
 

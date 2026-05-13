@@ -23,13 +23,14 @@ Use this skill when asked to review or self-evaluate a feature spec in `.specs/<
    - `3`: acceptable
    - `4`: good
    - `5`: excellent
-4. For every category, write exactly one sentence explaining why that score was given.
-5. Calculate the average score to two decimal places.
-6. Choose a verdict:
+4. For every category, assign a status tag: `[PASS]` for scores `4-5`, `[WEAK]` for score `3`, and `[FAIL]` for scores `1-2`.
+5. For every category, write exactly one sentence explaining why that score was given.
+6. Calculate the average score to two decimal places.
+7. Choose a verdict:
    - `PASS`: average is at least `4.00`, no category is below `3`, and all required spec files exist.
    - `WEAK`: average is at least `3.00`, but the spec has material gaps or at least one category below `3`.
    - `FAIL`: average is below `3.00`, any category is `1`, or required spec files are missing in a way that prevents meaningful evaluation.
-7. Save the report to `.specs/<feature>/eval-report-<date>.md`, where `<date>` is the local date in `YYYY-MM-DD` format. If that same-day report already exists, update it in place unless the user asks to preserve prior reports.
+8. Save the report to `.specs/<feature>/eval-report-<date>.md`, where `<date>` is the local date in `YYYY-MM-DD` format. If that same-day report already exists, update it in place unless the user asks to preserve prior reports.
 
 ## Report Format
 
@@ -44,9 +45,9 @@ Use this skill when asked to review or self-evaluate a feature spec in `.specs/<
 
 ## Scores
 
-| Category | Points | Summary |
-|---|---:|---|
-| **<Category>** | <1-5> | <One sentence explaining the score.> |
+| Category | Status | Points | Summary |
+|---|---|---:|---|
+| **<Category>** | <[PASS|WEAK|FAIL]> | <1-5> | <One sentence explaining the score.> |
 
 ## General Summary
 

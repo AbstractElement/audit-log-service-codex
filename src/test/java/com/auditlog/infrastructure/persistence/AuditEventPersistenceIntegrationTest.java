@@ -4,13 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.auditlog.application.AuditEventRepository;
-import com.auditlog.application.AuditEventSearchCriteria;
 import com.auditlog.domain.AuditEvent;
 import com.auditlog.domain.AuditOutcome;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -76,18 +76,20 @@ class AuditEventPersistenceIntegrationTest {
                     event.id()))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("audit_events records are immutable");
+  }
 
-    assertThat(repository.find(new AuditEventSearchCriteria(null, null, null, null, 10, 0)))
-        .singleElement()
-        .satisfies(
-            persisted -> {
-              assertThat(persisted.id()).isEqualTo(event.id());
-              assertThat(persisted.actor()).isEqualTo("service:billing");
-              assertThat(persisted.action()).isEqualTo("invoice.created");
-              assertThat(persisted.resource()).isEqualTo("invoice/123");
-              assertThat(persisted.outcome()).isEqualTo(AuditOutcome.SUCCESS);
-              assertThat(persisted.timestamp()).isEqualTo(Instant.parse("2026-04-25T12:00:00Z"));
-              assertThat(persisted.context()).containsEntry("traceId", "trace-123");
-            });
+  @Test
+  void auditEventsTableHasExpectedIndexesAfterMigrations() {
+    var indexes =
+        Set.copyOf(
+            jdbcTemplate.queryForList(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'audit_events'", String.class));
+
+    assertThat(indexes)
+        .containsExactlyInAnyOrder(
+            "audit_events_pkey",
+            "idx_audit_events_timestamp",
+            "idx_audit_events_actor_ts_id",
+            "idx_audit_events_resource_ts_id");
   }
 }

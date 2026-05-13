@@ -109,4 +109,27 @@ class ArchitectureRulesTest {
         .beAssignableTo(AuditEventRepository.class)
         .check(CLASSES);
   }
+
+  @Test
+  void apiLayer_doesNotDependOnAuditEventCursor() {
+    noClasses()
+        .that()
+        .resideInAPackage("com.auditlog.api..")
+        .should()
+        .dependOnClassesThat()
+        .haveSimpleName("AuditEventCursor")
+        .because("API must treat nextCursor as an opaque String (AC-5.1).")
+        .check(CLASSES);
+  }
+
+  @Test
+  void auditEventCursor_residesInApplicationPackage() {
+    classes()
+        .that()
+        .haveSimpleName("AuditEventCursor")
+        .should()
+        .resideInAPackage("com.auditlog.application..")
+        .because("Cursor encoding belongs to the Application layer (AC-5.1).")
+        .check(CLASSES);
+  }
 }

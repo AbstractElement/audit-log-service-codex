@@ -1,8 +1,9 @@
 package com.auditlog.api;
 
 import com.auditlog.application.AuditEventIngestionService;
+import com.auditlog.application.AuditEventPage;
+import com.auditlog.application.AuditEventQuery;
 import com.auditlog.application.AuditEventQueryService;
-import com.auditlog.application.AuditEventSearchCriteria;
 import com.auditlog.application.AuditEventView;
 import com.auditlog.application.RecordAuditEventCommand;
 import jakarta.validation.Valid;
@@ -27,6 +28,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/audit-events")
 public class AuditEventController {
 
+  private static final int DEFAULT_LIMIT = 100;
+
   private final AuditEventIngestionService ingestionService;
   private final AuditEventQueryService queryService;
 
@@ -43,20 +46,21 @@ public class AuditEventController {
   }
 
   @GetMapping
-  public List<AuditEventResponse> find(
+  public AuditEventPageResponse query(
       @RequestParam(required = false) String actor,
       @RequestParam(required = false) String resource,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
           Instant from,
       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
           Instant to,
-      @RequestParam(defaultValue = "100") int limit,
-      @RequestParam(defaultValue = "0") int offset) {
-    return queryService
-        .find(new AuditEventSearchCriteria(actor, resource, from, to, limit, offset))
-        .stream()
-        .map(AuditEventResponse::fromView)
-        .toList();
+      @RequestParam(required = false) Integer limit,
+      @RequestParam(required = false) String cursor) {
+    int effectiveLimit = limit == null ? DEFAULT_LIMIT : limit;
+    AuditEventQuery query = new AuditEventQuery(actor, resource, from, to, effectiveLimit, cursor);
+    AuditEventPage page = queryService.queryPage(query);
+    List<AuditEventResponse> items =
+        page.items().stream().map(AuditEventResponse::fromView).toList();
+    return new AuditEventPageResponse(items, page.nextCursor(), page.hasMore());
   }
 
   public record CreateAuditEventRequest(
@@ -91,4 +95,7 @@ public class AuditEventController {
           event.context());
     }
   }
+
+  public record AuditEventPageResponse(
+      List<AuditEventResponse> items, String nextCursor, boolean hasMore) {}
 }

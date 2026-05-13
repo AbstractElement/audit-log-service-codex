@@ -14,7 +14,7 @@ public record AuditEventView(
     String outcome,
     Map<String, Object> context) {
 
-  static AuditEventView fromDomain(AuditEvent event) {
+  public static AuditEventView fromDomain(AuditEvent event) {
     return new AuditEventView(
         event.id(),
         event.timestamp(),

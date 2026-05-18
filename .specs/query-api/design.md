@@ -62,10 +62,8 @@ A single shape, returned by a `@RestControllerAdvice` handler:
 { "error": "INVALID_REQUEST", "message": "from must be before to", "field": "from" }
 ```
 
-The exact body format (e.g. RFC 7807) is still
-[Open Question #3](./requirements.md#open-questions); this design uses the
-ad-hoc shape above to unblock implementation. Switching later is a
-controller-layer change only.
+The `field` value is nullable for errors that are not tied to a single
+request parameter. The API does not use RFC 7807 in v1.
 
 ## Sort & determinism
 
@@ -104,7 +102,8 @@ auditors page deep:
 
 The current `GET /audit-events` uses offset; this design replaces it
 (per the *Out of scope* clause in requirements: no backwards-compatibility
-shim for offset).
+shim for offset). A legacy `offset` query parameter is not bound by the
+controller and is silently ignored as an unknown parameter.
 
 #### Why keyset
 
@@ -131,13 +130,16 @@ Opaque base64-url of a small JSON envelope:
 
 - **Encoding**: `Base64.getUrlEncoder().withoutPadding().encodeToString(json)`.
 - **Decoding**: `400` on any parse error or unknown `v` (AC-2.5).
-- **Tampering**: not signed in v1. The endpoint is read-only and currently
-  unauthenticated, so a tampered cursor can only return rows that the same
-  caller could ask for directly via filter params. HMAC signing is parked in
-  [Open Question #2](./requirements.md#open-questions).
+- **Signing/TTL**: not signed and not expiring in v1. The endpoint is
+  read-only and currently unauthenticated; cursor protection is limited to
+  parseability, supported version, and validation of the decoded envelope.
 - **Pinned filters**: every cursor request decodes the envelope and reapplies
   `actor`, `resource`, `from`, `to` from inside it; client-supplied filter
   params alongside `cursor` cause a `400` (AC-2.4).
+- **Envelope validation**: decoded cursors must contain at least one
+  pinned `actor`/`resource`, valid `from`/`to`, `from < to`, and a window no
+  wider than 7 days. This keeps cursor requests bounded even though the cursor
+  is unsigned.
 
 ### Page assembly — `LIMIT n+1`
 
@@ -175,7 +177,7 @@ plans it more reliably against the composite index.
 
 ## Indexes
 
-### New indexes (Flyway `V3__refine_query_indexes.sql`)
+### New indexes (Flyway `V3__add_keyset_indexes.sql`)
 
 ```sql
 CREATE INDEX idx_audit_events_actor_ts_id
@@ -198,7 +200,9 @@ DROP INDEX idx_audit_events_resource_timestamp;
 
 These are strict key-prefixes of the new indexes; PG will choose the new
 indexes for any query the old ones served, so retaining them only doubles
-the write amplification on every ingest.
+the write amplification on every ingest. The feature is treated as
+pre-production, so the cleanup migration uses plain Flyway `DROP INDEX`
+rather than `DROP INDEX CONCURRENTLY`.
 
 ### Index kept
 
@@ -218,10 +222,24 @@ expected to pick the more selective single-column index — typically `actor`
 2. Selectivity of `actor` at 50M rows is high enough in expected workloads
    to keep the heap-filter cost well under p95.
 
-This **must be verified** with `EXPLAIN ANALYZE` against a 50M-row dataset
-before sign-off (AC-3.2). If selectivity proves insufficient for some hot
-actor, add a partial index targeting that actor rather than a global
-combined index.
+This **must be verified** by T9 with `EXPLAIN ANALYZE` against a synthetic
+50M-row dataset before sign-off (AC-3.2). If selectivity proves insufficient
+for some hot actor, add a partial index targeting that actor rather than a
+global combined index.
+
+### T9 performance verification
+
+T9 is the final gate before merging the feature to `master`.
+
+- Generate or load a synthetic 50M-row `audit_events` dataset with realistic
+  actor/resource selectivity and timestamps spanning multiple windows.
+- Run `EXPLAIN ANALYZE` for actor-only, resource-only, and combined
+  actor/resource compliant requests. Plans must show the new V3 keyset
+  indexes (`idx_audit_events_actor_ts_id` or
+  `idx_audit_events_resource_ts_id`) on the hot table.
+- Measure server-side p95 latency for compliant first-page and cursor-page
+  requests at representative `limit` values, including `100` and `500`.
+  AC-3.1 passes only if p95 is ≤ 300ms.
 
 ## Validation rules
 
@@ -231,19 +249,20 @@ covered by unit tests independent of Spring MVC.
 | Rule | Source AC | Failure mode |
 |------|-----------|--------------|
 | Either `actor` or `resource` non-blank (when no cursor)        | AC-1.4 | `400` `MISSING_FILTER` |
-| `from` and `to` both supplied (when no cursor)                 | AC-1.3 | `400` `MISSING_PARAMETER`, `field` set |
-| `from`, `to` parse as ISO-8601 UTC                             | AC-1.7 | `400` `INVALID_TIMESTAMP` |
+| `from` and `to` both supplied (when no cursor)                 | AC-1.3 | `400` `MISSING_PARAMETER`, `field` set to the first missing parameter |
+| `from`, `to` parse as ISO-8601 instants that bind to UTC       | AC-1.7 | `400` `INVALID_TIMESTAMP` |
 | `from < to`                                                    | AC-1.5 | `400` `INVALID_TIME_WINDOW` |
 | `to − from ≤ Duration.ofDays(7)`                               | AC-1.6 | `400` `WINDOW_TOO_LARGE` |
-| `1 ≤ limit ≤ 500`                                              | AC-2.6, AC-2.7 | `400` `LIMIT_OUT_OF_RANGE` |
+| `1 ≤ limit ≤ 500` on first-page and cursor requests            | AC-2.6, AC-2.7 | `400` `LIMIT_OUT_OF_RANGE` |
 | `cursor` parses as base64-url JSON, version 1                  | AC-2.5 | `400` `INVALID_CURSOR` |
+| Decoded cursor envelope contains valid pinned filters/window   | AC-2.5 | `400` `INVALID_CURSOR` |
 | Mutual exclusion: `cursor` ⇔ none of `actor`/`resource`/`from`/`to` | AC-2.4 | `400` `CONFLICTING_PARAMETERS` |
 
-Bean Validation handles single-field shapes (`@Min`, `@Max` on `limit`,
-`@Pattern` on the timestamp formats). Cross-field rules are enforced inside
-the Application service via a dedicated `AuditEventQuery.validate()` step
-that returns a `Result<AuditEventQuery, ValidationError>` — keeping the
-domain expression-oriented and easy to unit-test without Spring.
+Spring MVC binding handles timestamp parse failures at the API boundary.
+Cross-field rules are enforced inside the Application service via
+`AuditEventQuery.validate()`, which throws `ValidationException` carrying a
+structured `ValidationError`. Cursor decode failures are wrapped into the
+same exception path so the API advice has one validation response path.
 
 ## Integration with arch layers
 
@@ -255,11 +274,10 @@ HTTP request
 │ API layer  (com.auditlog.api)                           │
 │  AuditEventController                                   │
 │   - @GetMapping("/audit-events")                        │
-│   - parses query string into AuditEventQueryRequest     │
-│     (API DTO, package-private)                          │
-│   - calls AuditEventQueryService.query(...)             │
+│   - parses query params and defaults limit              │
+│   - calls AuditEventQueryService.queryPage(...)         │
 │   - maps AuditEventPage → AuditEventPageResponse        │
-│   - @RestControllerAdvice maps ValidationError → 400    │
+│   - @RestControllerAdvice maps ValidationException → 400 │
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
@@ -271,20 +289,22 @@ HTTP request
 │  Service:                                               │
 │   AuditEventQueryService                                │
 │     · validates request                                 │
-│     · decodes cursor (if any) and reapplies filters     │
-│     · calls AuditEventRepository.findPage(query)        │
-│     · slices `limit+1`, builds nextCursor               │
+│     · decodes and validates cursor envelopes            │
+│     · calls AuditEventRepository.findPage(query,        │
+│       cursorTs, cursorId)                               │
 │  Port:                                                  │
-│   AuditEventRepository.findPage(AuditEventQuery)        │
+│   AuditEventRepository.findPage(query, cursorTs,        │
+│   cursorId)                                             │
 └──────────────────────┬──────────────────────────────────┘
                        ▼
 ┌─────────────────────────────────────────────────────────┐
 │ Infrastructure layer  (com.auditlog.infrastructure)     │
 │  JpaAuditEventRepository implements AuditEventRepository│
 │   - emits the SQL shown in *Pagination strategy*        │
+│   - slices `limit+1` and builds nextCursor              │
 │   - @Transactional(readOnly = true)                     │
 │   - maps AuditEventEntity → AuditEvent (domain)         │
-│  Flyway: V3__refine_query_indexes.sql                   │
+│  Flyway: V3__add_keyset_indexes.sql                     │
 └─────────────────────────────────────────────────────────┘
 
 Domain layer (com.auditlog.domain) is untouched:
@@ -298,10 +318,11 @@ Domain layer (com.auditlog.domain) is untouched:
   Replacing rather than evolving avoids the temptation of a hybrid
   cursor/offset shape, which would violate AC-2.4.
 - `AuditEventRepository.find(...)` is **replaced** by
-  `AuditEventRepository.findPage(...)` returning `AuditEventPage`. Single
-  port method change, single integration test rewrite.
-- `AuditEventQueryService.query(...)` returns `AuditEventPage` instead of
-  `List<AuditEventView>`. Wiring change only inside the Application layer.
+  `AuditEventRepository.findPage(AuditEventQuery, Instant, UUID)` returning
+  `AuditEventPage`. Single port method change, single integration test
+  rewrite.
+- `AuditEventQueryService.queryPage(...)` returns `AuditEventPage` instead of
+  the legacy `find(...)` path returning `List<AuditEventView>`.
 
 ### Test coverage map (AC-5.4)
 
@@ -311,26 +332,29 @@ Domain layer (com.auditlog.domain) is untouched:
   - `AuditEventQueryValidationTest` — every row of the *Validation rules*
     table.
 - Integration test
-  - `AuditEventQueryIntegrationTest` (Testcontainers PG 16) — seed N rows,
-    page through with cursor across ≥ 3 pages, interleave concurrent inserts
-    at the head, assert no row is seen twice and no row is skipped.
+  - `AuditEventQueryRepositoryIntegrationTest` (Testcontainers PG 16) —
+    seed N rows, page through with cursor across ≥ 3 pages, interleave
+    concurrent inserts at the head, assert no row is seen twice and no row is
+    skipped.
+  - T9 performance verification — synthetic 50M-row dataset, server-side p95
+    ≤ 300ms, and EXPLAIN ANALYZE proving the new keyset indexes are used.
 - ArchUnit
-  - Existing rules already enforce that `AuditEventQuery`,
-    `AuditEventCursor`, `AuditEventPage` live under
-    `com.auditlog.application`. No new rule needed unless a new sub-package
-    is introduced.
+  - Explicit assertions confirm `AuditEventQuery`, `AuditEventCursor`, and
+    `AuditEventPage` live under `com.auditlog.application`.
+  - API classes must not depend directly on `AuditEventCursor`; the API sees
+    cursors only as opaque strings.
 
 ## Alignment with AGENTS.md
 
 - **DDD-first** — Domain layer is not touched. `AuditEventQuery` and
   `AuditEventCursor` are Application-layer value types; `AuditEvent` itself
   remains framework-free.
-- **Clean architecture layering** — Dependencies still point inward only.
+- **Clean architecture layering** — Dependencies continue to point inward only.
   The new repository port `AuditEventRepository.findPage` is defined in
   Application; its sole implementation lives in Infrastructure; the API
   layer talks only to `AuditEventQueryService`.
 - **Persistence rules** — Schema changes are limited to the new Flyway
-  migration `V3__refine_query_indexes.sql`. No JPA/Hibernate access leaks
+  migration `V3__add_keyset_indexes.sql`. No JPA/Hibernate access leaks
   out of Infrastructure.
 - **Testing strategy** — Unit tests cover validation and cursor logic with
   zero Spring context. The Testcontainers integration test exercises the
@@ -344,9 +368,9 @@ Domain layer (com.auditlog.domain) is untouched:
 - **Architecture enforcement** — The existing
   `ArchitectureRulesTest` continues to enforce
   *API ↛ Infrastructure*, *Application ↛ Infrastructure impls*,
-  *Domain ↛ Spring/JPA*. No new rule is required; one assertion will be
-  added so that `AuditEventCursor` lives under `com.auditlog.application`
-  to keep cursor encoding out of the controller.
+  *Domain ↛ Spring/JPA*. New assertions keep `AuditEventQuery`,
+  `AuditEventCursor`, and `AuditEventPage` in `com.auditlog.application` and
+  keep cursor encoding out of the controller.
 - **Smallest safe change** — One refined endpoint (no parallel `/v2`), one
   Flyway migration, one port-method evolution, one new pagination value
   type. Offset support is removed rather than maintained, in line with the

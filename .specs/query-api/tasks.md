@@ -27,9 +27,9 @@ feature merges to `master`.
 index-bounded. **No drops** in this PR.
 
 **References.**
-- requirements.md → AC-3.2 (queries must run through composite indexes,
-  verified by EXPLAIN ANALYZE).
-- design.md → *Indexes → New indexes (Flyway `V3__refine_query_indexes.sql`)*.
+- requirements.md → AC-3.2 (queries must run through the new keyset
+  composite indexes, verified by EXPLAIN ANALYZE).
+- design.md → *Indexes → New indexes (Flyway `V3__add_keyset_indexes.sql`)*.
 
 **Scope.**
 - New file `src/main/resources/db/migration/V3__add_keyset_indexes.sql`
@@ -77,7 +77,7 @@ wired into any caller.
 - New types compile under `com.auditlog.application`.
 - `AuditEventCursorTest` passes.
 - No production code references the new types yet (grep confirms).
-- Existing tests untouched and still pass.
+- Existing tests untouched and continue to pass.
 
 **Dependencies.** None.
 
@@ -96,11 +96,11 @@ wired into any caller.
 **Scope.**
 - Introduce `com.auditlog.application.ValidationError` (record with
   `code`, `message`, `field?`).
-- Add `AuditEventQuery.validate()` returning either the same query or a
-  `ValidationError`. Use a small sealed `Result<T,E>` if needed; otherwise
-  throw a checked-style domain exception. Pick whichever matches the
-  existing project idiom (verify by reading
-  `com.auditlog.application.AuditEventQueryService` first).
+- Introduce `com.auditlog.application.ValidationException`
+  (`RuntimeException` carrying a `ValidationError`).
+- Add `AuditEventQuery.validate()` returning the same query on success and
+  throwing `ValidationException` on failure. Missing `from`/`to` validation
+  reports the first missing parameter encountered.
 - Unit test `AuditEventQueryValidationTest` — one test per row of the
   validation rules table, plus the cursor/filter mutual-exclusion case.
 
@@ -114,7 +114,7 @@ wired into any caller.
 
 ---
 
-## T4 — Repository port: add `findPage(AuditEventQuery)` and JPA implementation
+## T4 — Repository port: add `findPage(AuditEventQuery, Instant, UUID)` and JPA implementation
 
 **Goal.** Extend the `AuditEventRepository` port with a keyset-pagination
 method and implement it in the existing infrastructure adapter, alongside
@@ -130,7 +130,8 @@ the current `find(AuditEventSearchCriteria)` (which stays for now).
   *Indexes → New indexes*.
 
 **Scope.**
-- Add `AuditEventPage findPage(AuditEventQuery query)` to
+- Add `AuditEventPage findPage(AuditEventQuery query, Instant cursorTs,
+  UUID cursorId)` to
   `com.auditlog.application.AuditEventRepository`.
 - Implement in `com.auditlog.infrastructure.persistence.JpaAuditEventRepository`
   using a native query that matches the SQL in design.md *Continuation
@@ -146,15 +147,15 @@ the current `find(AuditEventSearchCriteria)` (which stays for now).
   interleave inserts at the head between pages and assert they are not
   visited.
 - Add `EXPLAIN (ANALYZE, BUFFERS)` assertion (or capture into a log) showing
-  one of the new V3 indexes is used, fulfilling AC-3.2 at unit-of-test
-  scale.
+  one of the new V3 indexes is used at unit-of-test scale. T9 owns the
+  50M-row AC-3.2 verification.
 
 **Definition of done.**
 - `JpaAuditEventRepository.findPage` exists and the new integration test
   passes.
 - Old `find(...)` and the existing
   `AuditEventPersistenceIntegrationTest` are unchanged.
-- `archUnitTest` still passes (no new package, no new framework leak).
+- `archUnitTest` remains green (no new package, no new framework leak).
 
 **Dependencies.** T1 (indexes must exist for the SQL to use them),
 T2 (uses `AuditEventQuery`, `AuditEventPage`).
@@ -164,33 +165,36 @@ T2 (uses `AuditEventQuery`, `AuditEventPage`).
 ## T5 — Application service: `AuditEventQueryService.queryPage(...)`
 
 **Goal.** Add a new orchestration method on the existing
-`AuditEventQueryService` that validates, decodes/encodes cursors, and
-calls `findPage`. Old `query(AuditEventSearchCriteria)` stays.
+`AuditEventQueryService` that validates, decodes cursors, and calls
+`findPage`. Old `query(AuditEventSearchCriteria)` stays.
 
 **References.**
-- requirements.md → AC-2.1, AC-2.2, AC-2.3, AC-2.4, AC-2.5, AC-2.8,
-  AC-3.3 (side-effect free), AC-5.1.
+- requirements.md → AC-2.1, AC-2.2, AC-2.3, AC-2.4, AC-2.5, AC-2.6,
+  AC-2.7, AC-2.8, AC-3.3 (side-effect free), AC-5.1.
 - design.md → *Cursor format*, *Pagination strategy → Page assembly*,
   *Integration with arch layers → Application layer*.
 
 **Scope.**
 - New method `AuditEventPage queryPage(AuditEventQuery query)` on
   `AuditEventQueryService`:
-  1. If `query.cursor()` is non-null: decode it, reject if any client
-     filter param is also present (AC-2.4), reapply the encoded filters.
-  2. Otherwise: call `query.validate()` (T3); reject on error.
-  3. Call `repository.findPage(...)`; build `nextCursor` from the last
-     **kept** item; set `hasMore` accordingly.
+  1. Validate `limit` for both first-page and cursor requests.
+  2. If `query.cursor()` is non-null: reject any client filter param
+     (AC-2.4), decode the cursor, validate the decoded envelope contains a
+     bounded pinned filter/window, and reapply the encoded filters.
+  3. Otherwise: call `query.validate()` (T3); reject on error.
+  4. Call `repository.findPage(query, cursorTs, cursorId)` and return the
+     adapter's `AuditEventPage` unchanged.
 - Unit test `AuditEventQueryServiceTest` (Mockito or hand-rolled fake of
   the port) — exercise: happy path single page, happy path multi-page,
-  cursor + filter conflict, malformed cursor, validation failure.
+  cursor + filter conflict, malformed cursor, cursor limit out of range,
+  invalid decoded cursor envelope, validation failure.
 - `AuditEventQueryService` and the new method must contain **no**
   Spring/JPA/HTTP imports (verify in CR).
 
 **Definition of done.**
 - New service method passes its unit tests.
 - No call site uses the new method yet (added in T6).
-- ArchUnit + existing tests still pass.
+- ArchUnit + existing tests continue to pass.
 
 **Dependencies.** T2, T3, T4.
 
@@ -211,9 +215,9 @@ This is the user-visible breaking change.
 
 **Scope.**
 - Replace the body of `GET /audit-events` to:
-  - Parse query string into a package-private `AuditEventQueryRequest`
-    DTO (API layer).
-  - Translate to `AuditEventQuery` (Application).
+  - Read `actor`, `resource`, `from`, `to`, `limit`, and `cursor` from
+    query parameters directly and default `limit` to `100`.
+  - Translate those values to `AuditEventQuery` (Application).
   - Call `AuditEventQueryService.queryPage(...)`.
   - Map `AuditEventPage` → `AuditEventPageResponse` (API DTO with
     `items`, `nextCursor`, `hasMore`).
@@ -221,8 +225,8 @@ This is the user-visible breaking change.
   Add `cursor`. Keep `actor`, `resource`, `from`, `to`, `limit` per the
   contract.
 - Add `com.auditlog.api.GlobalExceptionHandler`
-  (`@RestControllerAdvice`) mapping `ValidationError` /
-  `IllegalArgumentException` (whichever T3 chose) to the
+  (`@RestControllerAdvice`) mapping `ValidationException` and timestamp
+  binding failures to the
   `{ error, message, field? }` body shape from design.md.
 - Spring MVC slice test (`@WebMvcTest`) — one assertion per error path
   in the validation table, plus the happy path returning the envelope.
@@ -233,10 +237,8 @@ This is the user-visible breaking change.
 - `./gradlew unitTest integrationTest archUnitTest` all green.
 - Manual `curl` against `bootRun` returns the new envelope shape on the
   happy path and the new error shape on each validation failure.
-- The endpoint no longer accepts `offset`; supplying `offset` returns
-  `400` (caught by Spring as an unknown parameter only if strict binding
-  is on — otherwise it is silently ignored; this is acceptable per
-  Open Question #5 in requirements).
+- The endpoint no longer binds `offset`; supplying `offset` is silently
+  ignored as an unknown query parameter.
 
 **Dependencies.** T5.
 
@@ -265,23 +267,24 @@ in T6 does not require also reverting a schema drop.
   old method that wraps `find`).
 - Delete or rewrite any test that references those types
   (`AuditEventPersistenceIntegrationTest` will need its old `find` paths
-  removed — keep only what is still meaningful for the write path).
+  removed — keep only what remains meaningful for the write path).
 
 **Definition of done.**
 - `grep -rn AuditEventSearchCriteria src/` returns nothing.
 - V4 applies cleanly on a fresh PG 16 Testcontainer; only the three
   expected indexes remain (`idx_audit_events_actor_ts_id`,
-  `idx_audit_events_resource_ts_id`, `idx_audit_events_timestamp`).
+  `idx_audit_events_resource_ts_id`, `idx_audit_events_timestamp`) plus
+  `audit_events_pkey`.
 - All test tasks green.
 
 **Dependencies.** T6 (must merge first so the old code has zero callers).
 
 ---
 
-## T8 — ArchUnit assertion: cursor stays in Application
+## T8 — ArchUnit assertion: query value types stay in Application
 
-**Goal.** Lock in AC-5.1 with a static check so future refactors cannot
-push cursor encoding into the API layer.
+**Goal.** Lock in AC-5.1 and AC-5.4 with static checks so future refactors
+cannot push query value types or cursor encoding into the wrong layer.
 
 **References.**
 - requirements.md → AC-5.1, AC-5.4.
@@ -294,6 +297,7 @@ push cursor encoding into the API layer.
     — the API layer must not import `AuditEventCursor` directly; it sees
     only the opaque `String nextCursor`.
   - `classes().that().haveSimpleName("AuditEventCursor").should().resideInAPackage("..application..")`.
+  - Equivalent package assertions for `AuditEventQuery` and `AuditEventPage`.
 - Verify the rules fail when intentionally violated (manual one-off
   experiment in a scratch branch — do not commit the violating change).
 
@@ -305,18 +309,53 @@ push cursor encoding into the API layer.
 
 ---
 
+## T9 — Performance verification against 50M rows
+
+**Goal.** Prove AC-3.1 and the 50M-row portion of AC-3.2 before the feature
+merges to `master`.
+
+**References.**
+- requirements.md → AC-3.1, AC-3.2.
+- design.md → *Indexes → T9 performance verification*.
+
+**Scope.**
+- Generate or load a synthetic 50M-row `audit_events` dataset with realistic
+  actor/resource distributions and enough timestamp spread to exercise
+  bounded windows.
+- Run `EXPLAIN (ANALYZE, BUFFERS)` for actor-only, resource-only, and
+  combined actor/resource compliant requests. The plan must use
+  `idx_audit_events_actor_ts_id` or `idx_audit_events_resource_ts_id` and
+  must select only from `audit_events`.
+- Measure server-side p95 latency for representative first-page and
+  cursor-page requests at `limit=100` and `limit=500`.
+- Capture the commands, dataset assumptions, EXPLAIN excerpts, latency
+  summary, and pass/fail result in a short verification artifact under
+  `.specs/query-api/`.
+
+**Definition of done.**
+- p95 latency is ≤ 300ms for every measured compliant request shape.
+- EXPLAIN ANALYZE verifies the new keyset indexes on the synthetic 50M-row
+  dataset.
+- The verification artifact is reviewed before merging the feature branch to
+  `master`.
+
+**Dependencies.** T7 (final query path and index set must be in place).
+
+---
+
 ## Suggested PR order and rollback notes
 
 | # | Task | Reversible by |
 |---|------|---------------|
 | 1 | T1   | `DROP INDEX` of the two new indexes (no schema-shape change). |
 | 2 | T2   | `git revert` — pure additive code. |
-| 3 | T3   | `git revert` — adds tests + a method on a still-unused record. |
+| 3 | T3   | `git revert` — adds tests + a method on an unused record. |
 | 4 | T8   | `git revert` — single ArchUnit rule. |
 | 5 | T4   | `git revert` — port method and adapter method are additive. |
 | 6 | T5   | `git revert` — service method is additive. |
 | 7 | T6   | `git revert` — controller swap; same revert restores the old offset endpoint. |
 | 8 | T7   | `git revert` of the code change + Flyway `V5__restore_legacy_indexes.sql` if the drop has already shipped. |
+| 9 | T9   | No production rollback — verification artifact only. |
 
 T8 is slotted before T4–T7 because it's cheap, independent, and protects
 the layer boundary the moment the cursor type exists.

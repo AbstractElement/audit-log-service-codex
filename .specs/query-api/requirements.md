@@ -37,21 +37,22 @@ in scope — specifically `GET /audit-events`.
   ISO-8601 UTC `from`, ISO-8601 UTC `to`, and at least one of `actor` or
   `resource`, THE SYSTEM SHALL return HTTP 200 with the matching events
   ordered by `event_timestamp` DESC, then `id` DESC as a deterministic
-  tiebreaker.
+  tiebreaker, using exact case-sensitive matches for `actor` and `resource`.
 - **AC-1.2** (Event-driven) WHEN both `actor` and `resource` are supplied,
   THE SYSTEM SHALL return only events matching both filters (logical AND).
 - **AC-1.3** (Unwanted) IF `from` is missing OR `to` is missing OR both are
-  missing, THEN THE SYSTEM SHALL return HTTP 400 with a body identifying the
-  missing parameter(s).
+  missing, THEN THE SYSTEM SHALL return HTTP 400 with a body identifying a
+  missing parameter. When both are missing, the system MAY report the first
+  missing parameter encountered.
 - **AC-1.4** (Unwanted) IF neither `actor` nor `resource` is supplied, THEN
   THE SYSTEM SHALL return HTTP 400 with a body stating that at least one of
   `actor` or `resource` is required.
-- **AC-1.5** (Unwanted) IF `from` is after `to`, THEN THE SYSTEM SHALL return
-  HTTP 400.
+- **AC-1.5** (Unwanted) IF `from` is equal to or after `to`, THEN THE SYSTEM
+  SHALL return HTTP 400.
 - **AC-1.6** (Unwanted) IF `to − from` exceeds 7 days, THEN THE SYSTEM SHALL
   return HTTP 400 with a body stating the 7-day cap.
-- **AC-1.7** (Unwanted) IF `from` or `to` is not a valid ISO-8601 UTC instant,
-  THEN THE SYSTEM SHALL return HTTP 400.
+- **AC-1.7** (Unwanted) IF `from` or `to` is not a valid ISO-8601 instant
+  that can be bound to a UTC `Instant`, THEN THE SYSTEM SHALL return HTTP 400.
 - **AC-1.8** (Ubiquitous) THE SYSTEM SHALL treat `from` as inclusive and `to`
   as exclusive (`[from, to)`).
 
@@ -71,10 +72,12 @@ in scope — specifically `GET /audit-events`.
 - **AC-2.4** (Unwanted) IF a `cursor` is supplied together with any of
   `actor`, `resource`, `from`, or `to`, THEN THE SYSTEM SHALL return HTTP 400,
   because the cursor pins the filter set.
-- **AC-2.5** (Unwanted) IF the supplied `cursor` is malformed, tampered, or
-  not parseable, THEN THE SYSTEM SHALL return HTTP 400.
+- **AC-2.5** (Unwanted) IF the supplied `cursor` is malformed, not parseable,
+  has an unsupported version, or decodes to an invalid pinned filter/window
+  set, THEN THE SYSTEM SHALL return HTTP 400.
 - **AC-2.6** (Ubiquitous) THE SYSTEM SHALL default `limit` to 100 and cap it
-  at 500.
+  at 500 on both first-page and cursor requests. Clients MAY change `limit`
+  between cursor pages.
 - **AC-2.7** (Unwanted) IF `limit` exceeds 500 OR is less than 1, THEN THE
   SYSTEM SHALL return HTTP 400.
 - **AC-2.8** (Ubiquitous) THE SYSTEM SHALL produce an opaque, URL-safe
@@ -88,9 +91,9 @@ in scope — specifically `GET /audit-events`.
 - **AC-3.1** (Ubiquitous) THE SYSTEM SHALL hold p95 ≤ 300ms for any compliant
   request when `audit_events` contains 50M rows, measured server-side.
 - **AC-3.2** (Ubiquitous) THE SYSTEM SHALL execute queries through the
-  existing composite indexes `idx_audit_events_actor_timestamp` and
-  `idx_audit_events_resource_timestamp`, verified with `EXPLAIN ANALYZE` on a
-  50M-row dataset.
+  keyset composite indexes `idx_audit_events_actor_ts_id` and
+  `idx_audit_events_resource_ts_id`, verified with `EXPLAIN ANALYZE` on a
+  synthetic 50M-row dataset.
 - **AC-3.3** (Ubiquitous) THE SYSTEM SHALL be side-effect free: a query
   request SHALL NOT write any rows to `audit_events`, mutate existing rows,
   or modify any other persistent state.
@@ -146,31 +149,27 @@ in scope — specifically `GET /audit-events`.
 - Multi-tenancy; there is no tenant column today and none is added here.
 - Rate limiting, quotas, and per-caller throttling.
 - Backwards-compatibility shim for the current offset/limit pagination —
-  callers will migrate to cursor pagination as part of this change.
+  callers will migrate to cursor pagination as part of this change. A legacy
+  `offset` query parameter has no effect and is ignored as an unknown
+  parameter by the API layer.
 - Logging/auditing the audit-query calls themselves ("audit the auditors").
 
-## Open questions
+## Resolved decisions
 
-1. **Audit-the-auditors** — Should reads of `GET /audit-events` themselves be
-   recorded somewhere (e.g. as new audit events with `action="audit.read"`)?
-   Compliance teams sometimes require this. Defaulting to "no" for v1.
-2. **Cursor TTL / signing** — Should `nextCursor` be HMAC-signed and/or
-   expire after N hours, or is an opaque base64 of `(timestamp, id, filters)`
-   sufficient? Signing prevents tampering; TTL prevents stale-snapshot abuse.
-3. **Error body format** — RFC 7807 `application/problem+json` or a
-   project-specific shape? The repo has no precedent yet.
-4. **Inclusive/exclusive `to`** — Confirm `[from, to)` semantics are
-   acceptable to auditors (proposed default in AC-1.8).
-5. **Offset/limit deprecation timing** — Switch to cursor immediately and
-   remove offset, or run both for one release? AGENTS.md prefers minimal
-   change, but offset cannot meet p95.
-6. **Total count** — Some auditor UIs want a `total` field. Cursor
-   pagination usually omits it because counting 50M rows would itself breach
-   p95. Defaulting to "omit"; confirm.
-7. **Future auth handoff** — Which team owns adding Spring Security and the
-   `auditor` role, and on what timeline? This feature ships unauthenticated
-   on the assumption that network-level controls gate the service.
-8. **Performance verification environment** — Do we have a 50M-row dataset
-   (synthetic or anonymised) available for the EXPLAIN ANALYZE / p95
-   measurement required by AC-3.1 and AC-3.2, or does generating one fall
-   within this feature?
+1. **Audit-the-auditors** — Reads of `GET /audit-events` are not recorded as
+   audit events in v1.
+2. **Cursor TTL / signing** — `nextCursor` is an unsigned, non-expiring,
+   opaque base64-url JSON envelope in v1.
+3. **Error body format** — Validation failures use the project-specific JSON
+   shape `{ "error": "<code>", "message": "<text>", "field": "<field|null>" }`.
+4. **Inclusive/exclusive `to`** — The API uses `[from, to)` semantics.
+5. **Offset/limit deprecation timing** — The endpoint switches directly to
+   cursor pagination. The old `offset` parameter is ignored if supplied.
+6. **Total count** — The response omits a `total` field.
+7. **Future auth handoff** — Authentication and authorization remain outside
+   v1; the endpoint stays unauthenticated as today.
+8. **Performance verification environment** — Performance sign-off uses a
+   synthetic 50M-row dataset in the T9 verification task.
+9. **Index-drop deployment assumption** — The legacy two-column indexes are
+   dropped with plain Flyway `DROP INDEX` because the service is treated as
+   pre-production for this feature.

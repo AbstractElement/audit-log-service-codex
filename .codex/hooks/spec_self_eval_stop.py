@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop hook enforcing spec-self-eval reports for touched .specs features."""
+"""Stop hook enforcing 0-5 spec-self-eval reports for touched .specs features."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any
 
 
 PATCH_PATH_RE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File): (?P<path>\.specs/[^\s]+)", re.MULTILINE)
+REPORT_NAME_RE = re.compile(r"^eval-report-(?P<date>\d{4}-\d{2}-\d{2})(?:-\d{6})?\.md$")
 
 
 def main() -> int:
@@ -36,13 +37,15 @@ def main() -> int:
         spec_files = [spec_dir / name for name in ("requirements.md", "design.md", "tasks.md")]
         if not any(path.exists() for path in spec_files):
             continue
-        report = spec_dir / f"eval-report-{today}.md"
-        reports.append(str(report))
-        if not report.exists():
+        report = current_report(spec_dir, today)
+        if report is None:
+            reports.extend(expected_report_paths(spec_dir, today))
             blockers.append(
-                f"{feature}: missing {report.relative_to(repo)}; run the spec-self-eval skill for `.specs/{feature}`."
+                f"{feature}: missing {expected_report_message(spec_dir, today, repo)}; "
+                f"run the spec-self-eval skill for `.specs/{feature}`."
             )
             continue
+        reports.append(str(report))
         if report_is_stale(report, spec_dir):
             blockers.append(
                 f"{feature}: {report.relative_to(repo)} is older than the spec files; rerun spec-self-eval."
@@ -167,11 +170,36 @@ def report_is_stale(report: Path, spec_dir: Path) -> bool:
     return bool(mtimes) and report.stat().st_mtime < max(mtimes)
 
 
+def current_report(spec_dir: Path, today: str) -> Path | None:
+    candidates = []
+    for path in spec_dir.glob(f"eval-report-{today}*.md"):
+        match = REPORT_NAME_RE.fullmatch(path.name)
+        if match and match.group("date") == today:
+            candidates.append(path)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: (path.stat().st_mtime, path.name))
+
+
+def expected_report_paths(spec_dir: Path, today: str) -> list[str]:
+    return [
+        str(spec_dir / f"eval-report-{today}.md"),
+        str(spec_dir / f"eval-report-{today}-HHMMSS.md"),
+    ]
+
+
+def expected_report_message(spec_dir: Path, today: str, repo: Path) -> str:
+    date_only = spec_dir / f"eval-report-{today}.md"
+    timestamped = spec_dir / f"eval-report-{today}-HHMMSS.md"
+    return f"{date_only.relative_to(repo)} or {timestamped.relative_to(repo)}"
+
+
 def parse_blocking_items(feature: str, report: Path) -> list[str]:
     items: list[str] = []
     text = report.read_text(encoding="utf-8")
-    if re.search(r"^\*\*Verdict:\*\*\s*FAIL\b", text, re.MULTILINE):
-        items.append(f"{feature}: report verdict is FAIL.")
+    verdict_match = re.search(r"^\*\*Verdict:\*\*\s*(PASS|WEAK|FAIL)\b", text, re.MULTILINE)
+    if verdict_match and verdict_match.group(1) != "PASS":
+        items.append(f"{feature}: report verdict is {verdict_match.group(1)}.")
     for line in text.splitlines():
         if not line.startswith("|") or "---" in line or "Category" in line:
             continue
@@ -183,10 +211,13 @@ def parse_blocking_items(feature: str, report: Path) -> list[str]:
         if any("[FAIL]" in cell for cell in cells):
             items.append(f"{feature} / {category}: [FAIL] - {summary}")
             continue
+        if any("[WEAK]" in cell for cell in cells):
+            items.append(f"{feature} / {category}: [WEAK] - {summary}")
+            continue
         for cell in cells[1:]:
-            if re.fullmatch(r"\**[1-5]\**", cell):
+            if re.fullmatch(r"\**[0-5]\**", cell):
                 points = int(cell.replace("*", ""))
-                if 1 <= points <= 3:
+                if 0 <= points <= 3:
                     items.append(f"{feature} / {category}: {points} points - {summary}")
                 break
     return items

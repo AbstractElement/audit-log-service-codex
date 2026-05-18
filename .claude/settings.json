@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/spec_self_eval_stop.py\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

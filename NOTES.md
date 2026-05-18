@@ -20,3 +20,5 @@
 - 2026-05-18: Verified the Stop hook parser with `.codex/hooks/spec_self_eval_stop_test.py`; `./gradlew check` still passed Spotless and compilation but failed at the same three Docker-backed Testcontainers integration-test initializers.
 - 2026-05-18: Restored missing `.specs/query-api` US-2 cursor-pagination acceptance criteria from the existing design/tasks references and saved `.specs/query-api/eval-report-2026-05-18-224141.md` with verdict PASS and average 4.29/5.
 - 2026-05-18: Reran `./gradlew check` after the refreshed query-api evaluation; Spotless and compilation passed, but the same three Docker-backed Testcontainers integration-test initializers failed.
+- 2026-05-18: Mirrored the spec-self-eval Stop hook script, parser tests, and shared hook registration into `.claude/` so Claude uses the same stale-spec-report guard as Codex.
+- 2026-05-18: Verified the mirrored Claude Stop hook with matching Codex/Claude parser tests and forced `query-api` hook checks; `./gradlew check` still passed Spotless and compilation but failed at the same three Docker-backed Testcontainers integration-test initializers.

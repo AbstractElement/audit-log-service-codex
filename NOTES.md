@@ -16,3 +16,7 @@
 - 2026-05-18: Reran `./gradlew check` after the Stop hook filename update; Spotless and compilation passed, but the same three Testcontainers integration-test initializers failed because Docker was unavailable.
 - 2026-05-18: Mirrored the repo-local `.codex/skills/spec-self-eval/` SKILL.md and bundled fallback checklist changes into `.claude/skills/spec-self-eval/`.
 - 2026-05-18: Reran `./gradlew check` after mirroring the spec-self-eval skill to `.claude`; Spotless and compilation passed, but the same three Docker-backed Testcontainers integration-test initializers failed because Docker was unavailable.
+- 2026-05-18: Updated the spec-self-eval Stop hook to treat concrete `.specs/<feature>/...` paths in tool calls as touched features, so inspecting an already-committed stale spec file triggers the stale-report block.
+- 2026-05-18: Verified the Stop hook parser with `.codex/hooks/spec_self_eval_stop_test.py`; `./gradlew check` still passed Spotless and compilation but failed at the same three Docker-backed Testcontainers integration-test initializers.
+- 2026-05-18: Restored missing `.specs/query-api` US-2 cursor-pagination acceptance criteria from the existing design/tasks references and saved `.specs/query-api/eval-report-2026-05-18-224141.md` with verdict PASS and average 4.29/5.
+- 2026-05-18: Reran `./gradlew check` after the refreshed query-api evaluation; Spotless and compilation passed, but the same three Docker-backed Testcontainers integration-test initializers failed.

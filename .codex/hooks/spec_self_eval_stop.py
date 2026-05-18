@@ -14,6 +14,7 @@ from typing import Any
 
 
 PATCH_PATH_RE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File): (?P<path>\.specs/[^\s]+)", re.MULTILINE)
+SPEC_PATH_RE = re.compile(r"(?P<path>(?:/[^\\\s\"'`|;&)]+/)?\.specs/[^\\\s\"'`|;&)]+/[^\\\s\"'`|;&)]+)")
 REPORT_NAME_RE = re.compile(r"^eval-report-(?P<date>\d{4}-\d{2}-\d{2})(?:-\d{6})?\.md$")
 
 
@@ -122,10 +123,17 @@ def transcript_features(payload: dict[str, Any], repo: Path) -> set[str]:
                 continue
             if event.get("type") == "patch_apply_end" and isinstance(event.get("changes"), dict):
                 features.update(filter(None, (feature_from_path(path, repo) for path in event["changes"])))
-            if event.get("type") == "function_call" and event.get("name") == "apply_patch":
+            if event.get("type") == "function_call":
                 args = str(event.get("arguments") or "")
-                features.update(filter(None, (feature_from_path(m.group("path"), repo) for m in PATCH_PATH_RE.finditer(args))))
+                if event.get("name") == "apply_patch":
+                    features.update(filter(None, (feature_from_path(m.group("path"), repo) for m in PATCH_PATH_RE.finditer(args))))
+                else:
+                    features.update(features_from_text(args, repo))
     return features
+
+
+def features_from_text(text: str, repo: Path) -> set[str]:
+    return set(filter(None, (feature_from_path(m.group("path"), repo) for m in SPEC_PATH_RE.finditer(text))))
 
 
 def git_status_features(repo: Path) -> set[str]:
@@ -152,6 +160,7 @@ def git_status_features(repo: Path) -> set[str]:
 
 
 def feature_from_path(raw: str, repo: Path) -> str | None:
+    repo = repo.resolve()
     path = Path(raw.strip().strip('"'))
     if path.is_absolute():
         try:

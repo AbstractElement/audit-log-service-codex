@@ -21,7 +21,8 @@ public class AuditEventQueryService {
     AuditEventQuery effective = query;
 
     if (hasCursor) {
-      if (query.actor() != null
+      query.validate();
+      if (query.rawActor() != null
           || query.resource() != null
           || query.from() != null
           || query.to() != null) {
@@ -34,12 +35,12 @@ public class AuditEventQueryService {
         throw new ValidationException(
             new ValidationError("INVALID_CURSOR", "Cursor is invalid.", "cursor"));
       }
-      effective =
-          query.withFilters(decoded.actor(), decoded.resource(), decoded.from(), decoded.to());
+      AuditActorSet actors = AuditActorSet.fromCanonical(decoded.actors());
+      effective = query.withFilters(actors, decoded.resource(), decoded.from(), decoded.to());
       cursorTs = decoded.ts();
       cursorId = decoded.id();
     } else {
-      effective.validate();
+      effective = query.validate();
     }
 
     return repository.findPage(effective, cursorTs, cursorId);

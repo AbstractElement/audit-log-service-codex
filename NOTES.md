@@ -28,3 +28,6 @@
 - 2026-05-19: Added `.specs/query-api/plans/multi-actor-filter-plan.md` with the detailed implementation plan for T10-T13 multi-actor filtering, cursor v2, repository SQL, API/docs updates, and verification.
 - 2026-05-19: Evaluated `.specs/query-api` after adding the multi-actor plan and saved `.specs/query-api/eval-report-2026-05-19-102200.md` with verdict PASS and average 4.43/5.
 - 2026-05-19: Ran `./gradlew unitTest archUnitTest` after adding the multi-actor plan and both tasks passed; `./gradlew check` passed Spotless and compilation but failed at the same three Docker-backed Testcontainers integration-test initializers.
+- 2026-05-19: Implemented the query-api multi-actor filter plan on `feature/query-api-multi-actor-filter`: added canonical actor sets, cursor v2 actors, multi-actor repository SQL, API/test coverage, and README query documentation.
+- 2026-05-19: Verified the multi-actor implementation with `./gradlew unitTest archUnitTest` passing and `./gradlew check` passing Spotless/compilation before failing at Docker-backed Testcontainers initialization for the three integration tests.
+- 2026-05-19: Reran multi-actor verification after Docker was started; `./gradlew integrationTest` and `./gradlew check` both passed.

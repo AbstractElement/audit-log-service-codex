@@ -72,6 +72,12 @@ Query audit events (first page):
 curl 'http://localhost:8080/audit-events?actor=service:billing&from=2026-05-01T00:00:00Z&to=2026-05-08T00:00:00Z&limit=100'
 ```
 
+Query audit events for multiple actors:
+
+```bash
+curl 'http://localhost:8080/audit-events?actor=service:billing,service:orders&from=2026-05-01T00:00:00Z&to=2026-05-08T00:00:00Z&limit=100'
+```
+
 The response is a paginated envelope:
 
 ```json
@@ -90,16 +96,16 @@ curl 'http://localhost:8080/audit-events?cursor=eyJ0cyI6Ij…&limit=100'
 
 Supported query parameters:
 
-- `actor` — exact match; at least one of `actor` or `resource` is required on first-page requests.
+- `actor` — comma-separated exact-match actor set with `1` to `10` values. Surrounding whitespace is trimmed, duplicate actors are deduplicated, order is insignificant, and commas inside actor values are not supported. At least one of `actor` or `resource` is required on first-page requests.
 - `resource` — exact match.
 - `from` — ISO-8601 UTC timestamp, inclusive. Required on first-page requests.
 - `to` — ISO-8601 UTC timestamp, exclusive. Required on first-page requests. `to - from` must not exceed 7 days.
 - `limit` — default `100`, must be between `1` and `500`.
-- `cursor` — opaque token from a previous response. Mutually exclusive with `actor`/`resource`/`from`/`to`.
+- `cursor` — opaque token from a previous response. Mutually exclusive with `actor`/`resource`/`from`/`to`; clients must not parse or edit it.
 
 Validation failures return HTTP 400 with a JSON body shaped as
 `{ "error": "<code>", "message": "<text>", "field": "<param>" }` (e.g.
-`MISSING_FILTER`, `WINDOW_TOO_LARGE`, `INVALID_TIMESTAMP`, `INVALID_CURSOR`).
+`MISSING_FILTER`, `INVALID_ACTOR_SET`, `WINDOW_TOO_LARGE`, `INVALID_TIMESTAMP`, `INVALID_CURSOR`).
 
 Valid outcomes:
 

@@ -1,6 +1,8 @@
 package com.auditlog.api;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,11 +10,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.auditlog.application.AuditEventIngestionService;
 import com.auditlog.application.AuditEventPage;
+import com.auditlog.application.AuditEventQuery;
 import com.auditlog.application.AuditEventQueryService;
 import com.auditlog.application.ValidationError;
 import com.auditlog.application.ValidationException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -34,13 +38,17 @@ class AuditEventControllerMvcTest {
     mockMvc
         .perform(
             get("/audit-events")
-                .param("actor", "svc:billing")
+                .param("actor", "svc:billing,svc:orders")
                 .param("from", "2026-05-01T00:00:00Z")
                 .param("to", "2026-05-03T00:00:00Z"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.items").isArray())
         .andExpect(jsonPath("$.nextCursor").value("next-tok"))
         .andExpect(jsonPath("$.hasMore").value(true));
+
+    ArgumentCaptor<AuditEventQuery> captor = ArgumentCaptor.forClass(AuditEventQuery.class);
+    verify(queryService).queryPage(captor.capture());
+    assertThat(captor.getValue().rawActor()).isEqualTo("svc:billing,svc:orders");
   }
 
   @Test
@@ -117,6 +125,22 @@ class AuditEventControllerMvcTest {
   }
 
   @Test
+  void query_invalidActorSet_returns400InvalidActorSet() throws Exception {
+    when(queryService.queryPage(any()))
+        .thenThrow(new ValidationException(ValidationError.invalidActorSet()));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("actor", "svc:billing,")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-03T00:00:00Z"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("INVALID_ACTOR_SET"))
+        .andExpect(jsonPath("$.field").value("actor"));
+  }
+
+  @Test
   void query_cursorWithFilter_returns400ConflictingParameters() throws Exception {
     when(queryService.queryPage(any()))
         .thenThrow(new ValidationException(ValidationError.conflictingParameters()));
@@ -148,5 +172,21 @@ class AuditEventControllerMvcTest {
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error").value("INVALID_TIMESTAMP"))
         .andExpect(jsonPath("$.field").value("from"));
+  }
+
+  @Test
+  void query_offsetParameterIsIgnored() throws Exception {
+    when(queryService.queryPage(any())).thenReturn(new AuditEventPage(List.of(), null, false));
+
+    mockMvc
+        .perform(
+            get("/audit-events")
+                .param("actor", "svc:billing")
+                .param("from", "2026-05-01T00:00:00Z")
+                .param("to", "2026-05-03T00:00:00Z")
+                .param("offset", "999"))
+        .andExpect(status().isOk());
+
+    verify(queryService).queryPage(any());
   }
 }

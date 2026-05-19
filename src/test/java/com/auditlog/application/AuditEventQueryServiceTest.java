@@ -28,9 +28,16 @@ class AuditEventQueryServiceTest {
     assertThat(result).isSameAs(expected);
     assertThat(repository.lastCursorTs).isNull();
     assertThat(repository.lastCursorId).isNull();
-    assertThat(repository.lastQuery.actor()).isEqualTo("svc:billing");
+    assertThat(repository.lastQuery.actors().values()).containsExactly("svc:billing");
     assertThat(repository.lastQuery.from()).isEqualTo(FROM);
     assertThat(repository.lastQuery.to()).isEqualTo(TO);
+  }
+
+  @Test
+  void queryPage_happyPath_multiActorFirstPage_canonicalizesActors() {
+    service.queryPage(new AuditEventQuery("svc:orders,svc:billing", null, FROM, TO, 100, null));
+
+    assertThat(repository.lastQuery.actors().values()).containsExactly("svc:billing", "svc:orders");
   }
 
   @Test
@@ -86,17 +93,51 @@ class AuditEventQueryServiceTest {
   }
 
   @Test
+  void queryPage_rejectsCursorLimitZero_throwsLimitOutOfRange() {
+    String token = cursorToken(List.of("svc:billing"), null);
+
+    assertThatThrownBy(
+            () -> service.queryPage(new AuditEventQuery(null, null, null, null, 0, token)))
+        .isInstanceOf(ValidationException.class)
+        .satisfies(
+            ex ->
+                assertThat(((ValidationException) ex).error().code())
+                    .isEqualTo("LIMIT_OUT_OF_RANGE"));
+    assertThat(repository.lastQuery).isNull();
+  }
+
+  @Test
+  void queryPage_rejectsCursorLimitOver500_throwsLimitOutOfRange() {
+    String token = cursorToken(List.of("svc:billing"), null);
+
+    assertThatThrownBy(
+            () -> service.queryPage(new AuditEventQuery(null, null, null, null, 501, token)))
+        .isInstanceOf(ValidationException.class)
+        .satisfies(
+            ex ->
+                assertThat(((ValidationException) ex).error().code())
+                    .isEqualTo("LIMIT_OUT_OF_RANGE"));
+    assertThat(repository.lastQuery).isNull();
+  }
+
+  @Test
   void queryPage_decodesCursorAndAppliesFiltersOntoEffectiveQuery() {
     UUID anchorId = UUID.fromString("5b9c0e1a-1234-4abc-9def-0123456789ab");
     Instant anchorTs = Instant.parse("2026-05-02T12:00:00Z");
     String token =
         AuditEventCursor.encode(
             new AuditEventCursor(
-                anchorTs, anchorId, "svc:billing", "invoice/4711", FROM, TO, AuditEventCursor.V));
+                anchorTs,
+                anchorId,
+                List.of("svc:billing", "svc:orders"),
+                "invoice/4711",
+                FROM,
+                TO,
+                AuditEventCursor.V));
 
     service.queryPage(new AuditEventQuery(null, null, null, null, 100, token));
 
-    assertThat(repository.lastQuery.actor()).isEqualTo("svc:billing");
+    assertThat(repository.lastQuery.actors().values()).containsExactly("svc:billing", "svc:orders");
     assertThat(repository.lastQuery.resource()).isEqualTo("invoice/4711");
     assertThat(repository.lastQuery.from()).isEqualTo(FROM);
     assertThat(repository.lastQuery.to()).isEqualTo(TO);
@@ -131,20 +172,24 @@ class AuditEventQueryServiceTest {
   }
 
   @Test
-  void queryPage_cursorPath_skipsFreshValidation() {
-    // Cursor anchor still inside an originally-valid window; ensure the cursor
-    // branch reaches the repository without re-running validate(). Using a
-    // token whose embedded window is fine; the test guarantees the cursor
-    // branch is the one taken.
-    Instant anchorTs = Instant.parse("2026-05-02T12:00:00Z");
-    String token =
-        AuditEventCursor.encode(
-            new AuditEventCursor(
-                anchorTs, UUID.randomUUID(), "svc:billing", null, FROM, TO, AuditEventCursor.V));
+  void queryPage_cursorPath_reachesRepositoryWithDecodedFilters() {
+    String token = cursorToken(List.of("svc:billing"), null);
 
     service.queryPage(new AuditEventQuery(null, null, null, null, 100, token));
 
-    assertThat(repository.lastQuery).isNotNull();
+    assertThat(repository.lastQuery.actors().values()).containsExactly("svc:billing");
+  }
+
+  private static String cursorToken(List<String> actors, String resource) {
+    return AuditEventCursor.encode(
+        new AuditEventCursor(
+            Instant.parse("2026-05-02T12:00:00Z"),
+            UUID.randomUUID(),
+            actors,
+            resource,
+            FROM,
+            TO,
+            AuditEventCursor.V));
   }
 
   static final class FakeRepository implements AuditEventRepository {

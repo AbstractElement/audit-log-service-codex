@@ -22,3 +22,4 @@
 - 2026-05-18: Reran `./gradlew check` after the refreshed query-api evaluation; Spotless and compilation passed, but the same three Docker-backed Testcontainers integration-test initializers failed.
 - 2026-05-18: Mirrored the spec-self-eval Stop hook script, parser tests, and shared hook registration into `.claude/` so Claude uses the same stale-spec-report guard as Codex.
 - 2026-05-18: Verified the mirrored Claude Stop hook with matching Codex/Claude parser tests and forced `query-api` hook checks; `./gradlew check` still passed Spotless and compilation but failed at the same three Docker-backed Testcontainers integration-test initializers.
+- 2026-05-19: Updated the Codex and Claude spec-self-eval Stop hooks to accept the latest existing eval report regardless of date when it is newer than the spec files, so read-only spec inspection does not force a new same-day report.

@@ -38,7 +38,7 @@ def main() -> int:
         spec_files = [spec_dir / name for name in ("requirements.md", "design.md", "tasks.md")]
         if not any(path.exists() for path in spec_files):
             continue
-        report = current_report(spec_dir, today)
+        report = latest_report(spec_dir)
         if report is None:
             reports.extend(expected_report_paths(spec_dir, today))
             blockers.append(
@@ -179,11 +179,11 @@ def report_is_stale(report: Path, spec_dir: Path) -> bool:
     return bool(mtimes) and report.stat().st_mtime < max(mtimes)
 
 
-def current_report(spec_dir: Path, today: str) -> Path | None:
+def latest_report(spec_dir: Path) -> Path | None:
     candidates = []
-    for path in spec_dir.glob(f"eval-report-{today}*.md"):
+    for path in spec_dir.glob("eval-report-*.md"):
         match = REPORT_NAME_RE.fullmatch(path.name)
-        if match and match.group("date") == today:
+        if match:
             candidates.append(path)
     if not candidates:
         return None

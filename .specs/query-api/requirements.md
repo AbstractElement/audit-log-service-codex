@@ -2,8 +2,9 @@
 
 ## Problem
 
-Compliance officers, SREs, and security analysts need to answer the question
-*"what did actor X do to resource Y last week"* against the audit log.
+Compliance officers, SREs, and security analysts need to answer questions like
+*"what did actor X do to resource Y last week"* and *"what did these actors do
+last week"* against the audit log.
 
 The current `GET /audit-events` endpoint accepts `actor`, `resource`, `from`,
 `to`, `limit`, `offset`, but:
@@ -17,9 +18,9 @@ The current `GET /audit-events` endpoint accepts `actor`, `resource`, `from`,
   and no stable continuation token across concurrent ingestion.
 
 This feature refines `GET /audit-events` into an auditor-grade read API with
-mandatory bounding inputs, keyset/cursor pagination, and a paginated response
-envelope, while keeping the existing immutability and clean-architecture
-guarantees of the service.
+mandatory bounding inputs, single-actor or multi-actor filtering, keyset/cursor
+pagination, and a paginated response envelope, while keeping the existing
+immutability and clean-architecture guarantees of the service.
 
 ## User stories with acceptance criteria
 
@@ -27,19 +28,22 @@ Acceptance criteria are written in EARS style (Ubiquitous, Event-driven,
 Unwanted-behaviour). Every "the system" below refers to the audit-log service
 in scope — specifically `GET /audit-events`.
 
-### US-1 — Query by actor and/or resource within a bounded time window
+### US-1 — Query by actor set and/or resource within a bounded time window
 
-> As a compliance officer, I want to retrieve audit events for a given actor
-> and/or resource within an explicit time window, so that I can investigate
-> what actions occurred during an incident or audit period.
+> As a compliance officer or security analyst, I want to retrieve audit events
+> for one actor, several actors, and/or a resource within an explicit time
+> window, so that I can investigate what actions occurred during an incident or
+> audit period.
 
 - **AC-1.1** (Event-driven) WHEN the client sends `GET /audit-events` with
   ISO-8601 UTC `from`, ISO-8601 UTC `to`, and at least one of `actor` or
   `resource`, THE SYSTEM SHALL return HTTP 200 with the matching events
   ordered by `event_timestamp` DESC, then `id` DESC as a deterministic
-  tiebreaker, using exact case-sensitive matches for `actor` and `resource`.
+  tiebreaker, using exact case-sensitive matches for each actor value and
+  `resource`.
 - **AC-1.2** (Event-driven) WHEN both `actor` and `resource` are supplied,
-  THE SYSTEM SHALL return only events matching both filters (logical AND).
+  THE SYSTEM SHALL return only events matching both filters (logical AND),
+  where `actor` matches any actor in the supplied actor set.
 - **AC-1.3** (Unwanted) IF `from` is missing OR `to` is missing OR both are
   missing, THEN THE SYSTEM SHALL return HTTP 400 with a body identifying a
   missing parameter. When both are missing, the system MAY report the first
@@ -55,6 +59,16 @@ in scope — specifically `GET /audit-events`.
   that can be bound to a UTC `Instant`, THEN THE SYSTEM SHALL return HTTP 400.
 - **AC-1.8** (Ubiquitous) THE SYSTEM SHALL treat `from` as inclusive and `to`
   as exclusive (`[from, to)`).
+- **AC-1.9** (Event-driven) WHEN the client supplies `actor` as a
+  comma-separated list of two to ten actor values, THE SYSTEM SHALL return
+  events whose `actor` exactly matches any supplied actor value.
+- **AC-1.10** (Ubiquitous) THE SYSTEM SHALL treat a single `actor` value as a
+  one-item actor set, preserving the current single-actor request behaviour.
+- **AC-1.11** (Unwanted) IF `actor` contains more than 10 actor values, THEN
+  THE SYSTEM SHALL return HTTP 400 with a body stating the 10-actor cap.
+- **AC-1.12** (Ubiquitous) THE SYSTEM SHALL NOT support actor values that
+  contain commas; commas in the `actor` query parameter are reserved as actor
+  separators.
 
 ### US-2 — Page through results deterministically
 
@@ -82,6 +96,8 @@ in scope — specifically `GET /audit-events`.
   SYSTEM SHALL return HTTP 400.
 - **AC-2.8** (Ubiquitous) THE SYSTEM SHALL produce an opaque, URL-safe
   `nextCursor` string (callers must not parse it).
+- **AC-2.9** (Ubiquitous) THE SYSTEM SHALL encode the full actor set in the
+  cursor filter set when the original request used one or more actors.
 
 ### US-3 — Predictable performance at scale
 
@@ -97,6 +113,9 @@ in scope — specifically `GET /audit-events`.
 - **AC-3.3** (Ubiquitous) THE SYSTEM SHALL be side-effect free: a query
   request SHALL NOT write any rows to `audit_events`, mutate existing rows,
   or modify any other persistent state.
+- **AC-3.4** (Ubiquitous) THE SYSTEM SHALL provide an index-backed query path
+  for compliant multi-actor time-window requests, verified with
+  `EXPLAIN ANALYZE` on a synthetic 50M-row dataset.
 
 ### US-4 — Response shape
 
@@ -173,3 +192,6 @@ in scope — specifically `GET /audit-events`.
 9. **Index-drop deployment assumption** — The legacy two-column indexes are
    dropped with plain Flyway `DROP INDEX` because the service is treated as
    pre-production for this feature.
+10. **Multi-actor input** — The existing `actor` query parameter accepts a
+    comma-separated set of one to ten actor values; exact case-sensitive
+    matching is applied independently to each actor value.

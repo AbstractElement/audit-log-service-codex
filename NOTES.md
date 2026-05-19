@@ -25,3 +25,6 @@
 - 2026-05-19: Updated the Codex and Claude spec-self-eval Stop hooks to accept the latest existing eval report regardless of date when it is newer than the spec files, so read-only spec inspection does not force a new same-day report.
 - 2026-05-19: Updated `.specs/query-api/tasks.md` to preserve implemented T1-T9 as the scalar-actor keyset baseline and add T10-T13 follow-up tasks for canonical actor sets, cursor v2, multi-actor repository queries, API/docs updates, and performance verification.
 - 2026-05-19: Evaluated the refreshed `.specs/query-api` documentation with `spec-self-eval` and saved `.specs/query-api/eval-report-2026-05-19-101032.md` with verdict PASS and average 4.29/5.
+- 2026-05-19: Added `.specs/query-api/plans/multi-actor-filter-plan.md` with the detailed implementation plan for T10-T13 multi-actor filtering, cursor v2, repository SQL, API/docs updates, and verification.
+- 2026-05-19: Evaluated `.specs/query-api` after adding the multi-actor plan and saved `.specs/query-api/eval-report-2026-05-19-102200.md` with verdict PASS and average 4.43/5.
+- 2026-05-19: Ran `./gradlew unitTest archUnitTest` after adding the multi-actor plan and both tasks passed; `./gradlew check` passed Spotless and compilation but failed at the same three Docker-backed Testcontainers integration-test initializers.

@@ -19,7 +19,61 @@ class AuditEventQueryValidationTest {
   @Test
   void validate_acceptsMinimalValidQuery_AC_1_1() {
     AuditEventQuery q = query("svc:billing", null, FROM, TO, 100, null);
-    assertThat(q.validate()).isSameAs(q);
+
+    AuditEventQuery validated = q.validate();
+
+    assertThat(validated.actors().values()).containsExactly("svc:billing");
+    assertThat(validated.from()).isEqualTo(FROM);
+    assertThat(validated.to()).isEqualTo(TO);
+  }
+
+  @Test
+  void validate_acceptsMultiActorQuery_AC_1_9() {
+    AuditEventQuery q = query("svc:orders, svc:billing,svc:orders", null, FROM, TO, 100, null);
+
+    AuditEventQuery validated = q.validate();
+
+    assertThat(validated.actors().values()).containsExactly("svc:billing", "svc:orders");
+  }
+
+  @Test
+  void validate_acceptsResourceOnlyQuery_AC_1_1() {
+    AuditEventQuery q = query(null, "invoice/4711", FROM, TO, 100, null);
+
+    AuditEventQuery validated = q.validate();
+
+    assertThat(validated.actors()).isNull();
+    assertThat(validated.resource()).isEqualTo("invoice/4711");
+  }
+
+  @Test
+  void validate_rejectsInvalidActorSet_emptyToken_AC_1_12() {
+    AuditEventQuery q = query("svc:billing,,svc:orders", null, FROM, TO, 100, null);
+
+    assertThatThrownBy(q::validate)
+        .isInstanceOf(ValidationException.class)
+        .satisfies(
+            ex -> {
+              ValidationError err = ((ValidationException) ex).error();
+              assertThat(err.code()).isEqualTo("INVALID_ACTOR_SET");
+              assertThat(err.field()).isEqualTo("actor");
+            });
+  }
+
+  @Test
+  void validate_rejectsInvalidActorSet_overTenActors_AC_1_11() {
+    AuditEventQuery q =
+        query("a01,a02,a03,a04,a05,a06,a07,a08,a09,a10,a11", null, FROM, TO, 100, null);
+
+    assertThatThrownBy(q::validate)
+        .isInstanceOf(ValidationException.class)
+        .satisfies(
+            ex -> {
+              ValidationError err = ((ValidationException) ex).error();
+              assertThat(err.code()).isEqualTo("INVALID_ACTOR_SET");
+              assertThat(err.message()).contains("1 to 10");
+              assertThat(err.field()).isEqualTo("actor");
+            });
   }
 
   @Test
@@ -39,6 +93,18 @@ class AuditEventQueryValidationTest {
   void validate_acceptsCursorAlone_AC_2_4() {
     AuditEventQuery q = query(null, null, null, null, 100, "tok");
     assertThat(q.validate()).isSameAs(q);
+  }
+
+  @Test
+  void validate_rejectsCursorLimitOutOfRange_AC_2_7() {
+    AuditEventQuery q = query(null, null, null, null, 501, "tok");
+
+    assertThatThrownBy(q::validate)
+        .isInstanceOf(ValidationException.class)
+        .satisfies(
+            ex ->
+                assertThat(((ValidationException) ex).error().code())
+                    .isEqualTo("LIMIT_OUT_OF_RANGE"));
   }
 
   @Test
@@ -127,7 +193,7 @@ class AuditEventQueryValidationTest {
     Instant from = Instant.parse("2026-05-01T00:00:00Z");
     Instant to = from.plusSeconds(7L * 24 * 3600);
     AuditEventQuery q = query("svc:billing", null, from, to, 100, null);
-    assertThat(q.validate()).isSameAs(q);
+    assertThat(q.validate().actors().values()).containsExactly("svc:billing");
   }
 
   @Test
@@ -157,12 +223,12 @@ class AuditEventQueryValidationTest {
   @Test
   void validate_acceptsLimit1_AC_2_7() {
     AuditEventQuery q = query("svc:billing", null, FROM, TO, 1, null);
-    assertThat(q.validate()).isSameAs(q);
+    assertThat(q.validate().actors().values()).containsExactly("svc:billing");
   }
 
   @Test
   void validate_acceptsLimit500_AC_2_7() {
     AuditEventQuery q = query("svc:billing", null, FROM, TO, 500, null);
-    assertThat(q.validate()).isSameAs(q);
+    assertThat(q.validate().actors().values()).containsExactly("svc:billing");
   }
 }

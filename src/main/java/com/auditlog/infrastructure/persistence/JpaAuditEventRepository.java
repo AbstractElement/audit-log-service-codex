@@ -1,5 +1,6 @@
 package com.auditlog.infrastructure.persistence;
 
+import com.auditlog.application.AuditActorSet;
 import com.auditlog.application.AuditEventCursor;
 import com.auditlog.application.AuditEventPage;
 import com.auditlog.application.AuditEventQuery;
@@ -7,6 +8,7 @@ import com.auditlog.application.AuditEventRepository;
 import com.auditlog.application.AuditEventView;
 import com.auditlog.domain.AuditEvent;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.Query;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -18,13 +20,30 @@ import org.springframework.transaction.annotation.Transactional;
 @Repository
 class JpaAuditEventRepository implements AuditEventRepository {
 
-  private static final String FIND_PAGE_SQL =
+  private static final String FIND_PAGE_SQL_WITH_ACTORS =
       """
       SELECT id, event_timestamp, actor, action, resource, outcome, context
         FROM audit_events
        WHERE event_timestamp >= :from
          AND event_timestamp <  :to
-         AND (CAST(:actor AS TEXT)    IS NULL OR actor    = CAST(:actor AS TEXT))
+         AND actor = ANY(CAST(:actors AS TEXT[]))
+         AND (CAST(:resource AS TEXT) IS NULL OR resource = CAST(:resource AS TEXT))
+         AND (
+               CAST(:cursor_ts AS TIMESTAMPTZ) IS NULL
+               OR event_timestamp <  CAST(:cursor_ts AS TIMESTAMPTZ)
+               OR (event_timestamp = CAST(:cursor_ts AS TIMESTAMPTZ)
+                   AND id < CAST(:cursor_id AS UUID))
+             )
+       ORDER BY event_timestamp DESC, id DESC
+       LIMIT :limit_plus_one
+      """;
+
+  private static final String FIND_PAGE_SQL_WITHOUT_ACTORS =
+      """
+      SELECT id, event_timestamp, actor, action, resource, outcome, context
+        FROM audit_events
+       WHERE event_timestamp >= :from
+         AND event_timestamp <  :to
          AND (CAST(:resource AS TEXT) IS NULL OR resource = CAST(:resource AS TEXT))
          AND (
                CAST(:cursor_ts AS TIMESTAMPTZ) IS NULL
@@ -56,22 +75,27 @@ class JpaAuditEventRepository implements AuditEventRepository {
     int limit = query.limit();
     OffsetDateTime from = query.from().atOffset(ZoneOffset.UTC);
     OffsetDateTime to = query.to().atOffset(ZoneOffset.UTC);
-    String actor = query.actor();
+    AuditActorSet actors = query.actors();
     String resource = query.resource();
     OffsetDateTime cursorAt = cursorTs == null ? null : cursorTs.atOffset(ZoneOffset.UTC);
 
-    @SuppressWarnings("unchecked")
-    List<JpaAuditEventEntity> rows =
+    Query nativeQuery =
         entityManager
-            .createNativeQuery(FIND_PAGE_SQL, JpaAuditEventEntity.class)
+            .createNativeQuery(
+                actors == null ? FIND_PAGE_SQL_WITHOUT_ACTORS : FIND_PAGE_SQL_WITH_ACTORS,
+                JpaAuditEventEntity.class)
             .setParameter("from", from)
             .setParameter("to", to)
-            .setParameter("actor", actor)
             .setParameter("resource", resource)
             .setParameter("cursor_ts", cursorAt)
             .setParameter("cursor_id", cursorId)
-            .setParameter("limit_plus_one", limit + 1)
-            .getResultList();
+            .setParameter("limit_plus_one", limit + 1);
+    if (actors != null) {
+      nativeQuery.setParameter("actors", actors.toArray());
+    }
+
+    @SuppressWarnings("unchecked")
+    List<JpaAuditEventEntity> rows = nativeQuery.getResultList();
 
     boolean hasMore = rows.size() > limit;
     List<JpaAuditEventEntity> kept = hasMore ? rows.subList(0, limit) : rows;
@@ -87,7 +111,7 @@ class JpaAuditEventRepository implements AuditEventRepository {
               new AuditEventCursor(
                   last.timestamp(),
                   last.id(),
-                  actor,
+                  actors == null ? null : actors.values(),
                   resource,
                   query.from(),
                   query.to(),

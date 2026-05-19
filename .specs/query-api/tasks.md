@@ -5,6 +5,12 @@ References point to specific anchors in
 
 Branch: `feature/audit-query-by-actor-resource` (already cut from `master`).
 
+Implementation status: `T1` through `T9` describe the already-implemented
+scalar-actor keyset baseline. Keep them as implementation history. Newly
+specified actor-set and cursor-v2 functionality is added as follow-up work in
+`T10` through `T13` and must be layered onto the existing endpoint without
+reintroducing offset pagination or changing the append-only write model.
+
 ## Task graph
 
 ```
@@ -13,11 +19,22 @@ T1 ──┐
 T2 ──┤            ▲
      ├──► T3 ─────┘
      └──► T8
+
+Implemented baseline: T1-T9
+
+Actor-set delta:
+
+T10 ──┬──► T11 ──┐
+      └──► T12 ──┼──► T13
+                 │
+                 └──► T9 verification addendum
 ```
 
 `T1` (additive migration) and `T2` (new types) have no dependencies and can
 land in either order. `T9` (perf verification) is the last gate before the
-feature merges to `master`.
+feature merges to `master`. For the actor-set delta, `T10` is the Application
+model prerequisite, `T11` updates cursor compatibility, `T12` updates the
+repository query path, and `T13` is the API/test/performance sign-off.
 
 ---
 
@@ -343,6 +360,174 @@ merges to `master`.
 
 ---
 
+## T10 — Application model: canonical actor sets
+
+**Goal.** Add the current requirements' multi-actor semantics to the existing
+Application-layer query model while preserving single-actor behavior as a
+one-item actor set.
+
+**References.**
+- requirements.md → AC-1.1, AC-1.2, AC-1.9, AC-1.10, AC-1.11, AC-1.12,
+  AC-5.1.
+- design.md → *API contract → Request — first page (no cursor)*,
+  *Validation rules*, *Type changes summary*.
+
+**Scope.**
+- Replace scalar `AuditEventQuery.actor` usage with a canonical actor set
+  (`List<String>` or a small Application-layer value type). The API still
+  receives the existing `actor` query parameter string.
+- Add deterministic parser logic in the Application layer:
+  split on comma, trim tokens, reject empty tokens, deduplicate, sort
+  lexicographically, and enforce 1-10 actor values.
+- Treat no actor filter as absent, a single actor as a one-item set, and
+  actor + resource as a logical AND over `actor IN set` and exact `resource`.
+- Keep validation side-effect free and framework-free; do not add Spring,
+  JPA, or API dependencies to Application types.
+- Add unit tests for one actor, two to ten actors, trim/dedupe/sort, empty
+  tokens, blank actor, over-10 actors, missing actor/resource, and actor +
+  resource AND semantics at the query model boundary.
+
+**Definition of done.**
+- `AuditEventQuery` exposes canonical actors to Application callers and no
+  production code depends on comma-splitting outside the Application layer.
+- Single-actor requests continue to validate and produce the same effective
+  filter as before, represented as a one-item actor set.
+- Invalid actor sets fail with `INVALID_ACTOR_SET`; over-10 actors produce a
+  message that states the 10-actor cap.
+- `unitTest` and `archUnitTest` pass.
+
+**Dependencies.** T1-T9 implemented baseline.
+
+---
+
+## T11 — Cursor v2: pin full actor sets
+
+**Goal.** Upgrade the cursor envelope from scalar actor version `1` to actor
+set version `2`, and reject unsupported old cursor shapes.
+
+**References.**
+- requirements.md → AC-2.3, AC-2.5, AC-2.8, AC-2.9, AC-5.1.
+- design.md → *Cursor format*, *Validation rules*,
+  *Type changes summary*.
+
+**Scope.**
+- Change `AuditEventCursor` to encode nullable `actors` instead of scalar
+  `actor`, using the same canonical actor-set representation as T10.
+- Set the supported cursor version constant to `2`; any cursor with an
+  unsupported version, including version `1`, returns `INVALID_CURSOR`.
+- Validate decoded cursors before repository access: anchor timestamp/id
+  present, at least one pinned actor set or resource, valid `[from, to)`
+  window no wider than seven days, and canonical actors when present.
+- Keep cursors unsigned, non-expiring, opaque, and URL-safe as specified.
+- Add cursor unit tests for no actors + resource, one actor, multiple actors,
+  malformed input, non-JSON input, version mismatch, missing pinned filters,
+  invalid time windows, empty actor tokens, over-10 actors, and non-canonical
+  actor order/duplicates.
+
+**Definition of done.**
+- New cursors encode `actors` arrays and never encode scalar `actor`.
+- Cursor requests reapply only the filters pinned inside the decoded cursor;
+  client-supplied `actor`, `resource`, `from`, or `to` alongside `cursor`
+  still fails with `CONFLICTING_PARAMETERS`.
+- Existing scalar-actor version-1 cursors are rejected as unsupported rather
+  than silently interpreted.
+- `unitTest` and `archUnitTest` pass.
+
+**Dependencies.** T10.
+
+---
+
+## T12 — Infrastructure: multi-actor keyset query path
+
+**Goal.** Add index-backed multi-actor query support to the existing
+`findPage` implementation without changing response ordering, hot-table-only
+reads, or keyset pagination semantics.
+
+**References.**
+- requirements.md → AC-1.1, AC-1.2, AC-1.8, AC-2.3, AC-3.2, AC-3.3,
+  AC-3.4, AC-4.3, AC-5.2.
+- design.md → *Pagination strategy → Continuation predicate*,
+  *Indexes → New indexes*, *Combined actor-set + resource queries*.
+
+**Scope.**
+- Update `AuditEventRepository.findPage(...)` callers and the JPA adapter to
+  accept the canonical actor set from `AuditEventQuery`.
+- Replace scalar `actor = :actor` filtering with a PostgreSQL array-backed
+  predicate equivalent to `actor = ANY(:actors)` when actors are present.
+- Preserve `resource` as an AND filter, `[from, to)` bounds, keyset
+  continuation over `(event_timestamp DESC, id DESC)`, `LIMIT limit + 1`,
+  selection only from `audit_events`, and cursor creation from the last kept
+  row.
+- Ensure generated `nextCursor` contains the full canonical actor set, not
+  only the actor value from the last row.
+- Do not add a combined `(actor, resource, event_timestamp, id)` index in this
+  task. If later 50M-row verification shows the existing actor index is not
+  sufficient, capture that as a follow-up spec/task instead of guessing.
+- Add Testcontainers coverage for actor-only multi-actor paging, multi-actor
+  + resource paging, exact case-sensitive matching, deterministic order across
+  actors, no duplicate ids, no skipped baseline rows, and concurrent inserts
+  at the head between cursor pages.
+
+**Definition of done.**
+- Multi-actor first-page and cursor-page queries return globally ordered
+  results across all selected actors.
+- Resource-only and single-actor queries keep their existing behavior.
+- Integration tests prove the adapter uses the hot table only and emits
+  cursors that preserve the full actor set.
+- `unitTest`, `integrationTest`, and `archUnitTest` pass, or any local
+  Testcontainers/Docker limitation is recorded clearly.
+
+**Dependencies.** T10, T11.
+
+---
+
+## T13 — API, docs, and actor-set verification
+
+**Goal.** Expose the actor-set behavior through the existing `GET
+/audit-events` endpoint, update project docs required by AGENTS.md, and
+extend performance sign-off for the new compliant request shapes.
+
+**References.**
+- requirements.md → AC-1.1 through AC-1.12, AC-2.1 through AC-2.9,
+  AC-3.1 through AC-3.4, AC-4.1 through AC-4.3, AC-5.4.
+- design.md → *API contract*, *Errors — 400*,
+  *T9 performance verification*, *Test coverage map*.
+
+**Scope.**
+- Keep the public endpoint path and query parameter names unchanged:
+  `GET /audit-events?actor=a,b&resource=...&from=...&to=...&limit=...`.
+- Ensure the API layer only translates HTTP parameters to Application DTOs;
+  actor parsing, cursor decoding, and validation remain outside the
+  controller.
+- Add/extend MVC and full-context integration tests for comma-separated
+  actors, actor/resource AND filtering, invalid actor-set errors, cursor +
+  filter conflict, cursor-v2 continuation, and ignored legacy `offset`.
+- Update `README.md` API documentation for comma-separated actors, actor-set
+  limits, cursor-v2 opacity, response envelope, and relevant validation
+  errors. No startup/config documentation changes are needed unless the
+  implementation introduces them.
+- Append progress to `NOTES.md` when this actor-set implementation lands.
+- Extend the T9 verification artifact with actor-only multi-actor and
+  actor-set + resource `EXPLAIN (ANALYZE, BUFFERS)` runs on the synthetic
+  50M-row dataset, plus p95 measurements for `limit=100` and `limit=500`.
+
+**Definition of done.**
+- The existing endpoint returns the specified envelope for single-actor,
+  multi-actor, resource-only, and actor-set + resource queries.
+- Error responses use the existing
+  `{ "error": "...", "message": "...", "field": "..." }` shape.
+- `README.md` reflects the new API behavior and no stale scalar-only cursor
+  examples remain in project docs.
+- The performance artifact shows the new V3 keyset indexes are used for
+  single-actor, multi-actor, resource-only, and actor-set + resource shapes,
+  or records an explicit follow-up indexing task if the existing plan fails.
+- `./gradlew unitTest integrationTest archUnitTest` is green, or unavailable
+  Docker/Testcontainers verification is called out in the task notes.
+
+**Dependencies.** T11, T12.
+
+---
+
 ## Suggested PR order and rollback notes
 
 | # | Task | Reversible by |
@@ -356,6 +541,15 @@ merges to `master`.
 | 7 | T6   | `git revert` — controller swap; same revert restores the old offset endpoint. |
 | 8 | T7   | `git revert` of the code change + Flyway `V5__restore_legacy_indexes.sql` if the drop has already shipped. |
 | 9 | T9   | No production rollback — verification artifact only. |
+| 10 | T10 | `git revert` — Application-level actor-set model and validation only. |
+| 11 | T11 | `git revert` — cursor-v2 code and tests; old implementation remains in git history only. |
+| 12 | T12 | `git revert` — repository query-path update; no migration rollback expected. |
+| 13 | T13 | `git revert` for API/docs/test edits; verification artifact has no production rollback. |
 
 T8 is slotted before T4–T7 because it's cheap, independent, and protects
 the layer boundary the moment the cursor type exists.
+
+For the actor-set delta, T10-T13 should land after the implemented baseline.
+Avoid mixing a future index experiment into T12/T13 unless the 50M-row
+verification proves it is necessary; schema changes must go through a new
+Flyway migration and a separate task.

@@ -28,6 +28,13 @@ public record ValidationError(String code, String message, String field) {
     return new ValidationError("LIMIT_OUT_OF_RANGE", "'limit' must be between 1 and 500.", "limit");
   }
 
+  public static ValidationError invalidActorSet() {
+    return new ValidationError(
+        "INVALID_ACTOR_SET",
+        "'actor' must contain 1 to 10 comma-separated non-empty values; comma is reserved as the separator.",
+        "actor");
+  }
+
   public static ValidationError conflictingParameters() {
     return new ValidationError(
         "CONFLICTING_PARAMETERS", "'cursor' cannot be supplied with filter parameters.");

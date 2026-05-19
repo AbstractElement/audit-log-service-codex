@@ -24,6 +24,9 @@ It is used for compliance, security, and observability purposes. It is accessed 
 - Agents must ask 5-7 clarification questions before writing a spec;
 - Acceptance Criteria must be written in EARS-style;
 - Specs is a source of truth: gaps go to spec first, code second;
+- Hooks defined in .claude/hooks and .codex/hooks
+- Skills defined in .claude/skills and .codex/skills
+- Any change in .codex or .claude folders must be mirrored accordingly between each other in order to have identical instructions
 
 ## Architecture rules
 

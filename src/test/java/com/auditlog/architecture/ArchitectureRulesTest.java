@@ -132,4 +132,29 @@ class ArchitectureRulesTest {
         .because("Cursor encoding belongs to the Application layer (AC-5.1).")
         .check(CLASSES);
   }
+
+  @Test
+  void queryValueTypes_resideInApplicationPackage() {
+    classes()
+        .that()
+        .haveSimpleName("AuditEventQuery")
+        .should()
+        .resideInAPackage("com.auditlog.application..")
+        .because("Query value types belong to the Application layer (AC-5.1).")
+        .check(CLASSES);
+    classes()
+        .that()
+        .haveSimpleName("AuditEventPage")
+        .should()
+        .resideInAPackage("com.auditlog.application..")
+        .because("Query value types belong to the Application layer (AC-5.1).")
+        .check(CLASSES);
+    classes()
+        .that()
+        .haveSimpleName("AuditActorSet")
+        .should()
+        .resideInAPackage("com.auditlog.application..")
+        .because("Query value types belong to the Application layer (AC-5.1).")
+        .check(CLASSES);
+  }
 }

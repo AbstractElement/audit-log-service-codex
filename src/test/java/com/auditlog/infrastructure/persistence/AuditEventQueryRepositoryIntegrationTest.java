@@ -2,10 +2,14 @@ package com.auditlog.infrastructure.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.auditlog.application.AuditActorSet;
 import com.auditlog.application.AuditEventCursor;
 import com.auditlog.application.AuditEventPage;
 import com.auditlog.application.AuditEventQuery;
 import com.auditlog.application.AuditEventRepository;
+import com.auditlog.application.AuditEventView;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,6 +22,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -55,43 +60,31 @@ class AuditEventQueryRepositoryIntegrationTest {
   void findPage_seedsAndPagesThreeFullPagesWithoutDuplicatesOrSkips() {
     seedRows("svc:billing", "invoice/4711", 250, WINDOW_FROM);
 
-    AuditEventQuery firstQuery =
-        new AuditEventQuery("svc:billing", null, WINDOW_FROM, WINDOW_TO, 100, null);
-    AuditEventPage page1 = repository.findPage(firstQuery, null, null);
+    List<AuditEventPage> pages = fetchPages(query("svc:billing", null, 100), 100);
 
-    assertThat(page1.items()).hasSize(100);
-    assertThat(page1.hasMore()).isTrue();
-    assertThat(page1.nextCursor()).isNotNull();
-    assertDescending(page1);
+    assertThat(pages).hasSize(3);
+    assertThat(pages.get(0).items()).hasSize(100);
+    assertThat(pages.get(1).items()).hasSize(100);
+    assertThat(pages.get(2).items()).hasSize(50);
+    assertThat(pages.get(2).hasMore()).isFalse();
+    assertThat(allIds(pages)).hasSize(250);
+    pages.forEach(AuditEventQueryRepositoryIntegrationTest::assertDescending);
+  }
 
-    AuditEventCursor cursor2 = AuditEventCursor.decode(page1.nextCursor());
-    AuditEventPage page2 =
-        repository.findPage(
-            new AuditEventQuery(
-                cursor2.actor(), cursor2.resource(), cursor2.from(), cursor2.to(), 100, null),
-            cursor2.ts(),
-            cursor2.id());
-    assertThat(page2.items()).hasSize(100);
-    assertThat(page2.hasMore()).isTrue();
-    assertDescending(page2);
+  @Test
+  void findPage_multiActorPagesAreGloballyOrderedAcrossActors() {
+    seedRows("svc:billing", "invoice/4711", 125, WINDOW_FROM);
+    seedRows("svc:orders", "order/99", 125, WINDOW_FROM.plusSeconds(1));
+    seedRows("svc:payments", "payment/77", 50, WINDOW_FROM.plusSeconds(2));
 
-    AuditEventCursor cursor3 = AuditEventCursor.decode(page2.nextCursor());
-    AuditEventPage page3 =
-        repository.findPage(
-            new AuditEventQuery(
-                cursor3.actor(), cursor3.resource(), cursor3.from(), cursor3.to(), 100, null),
-            cursor3.ts(),
-            cursor3.id());
-    assertThat(page3.items()).hasSize(50);
-    assertThat(page3.hasMore()).isFalse();
-    assertThat(page3.nextCursor()).isNull();
-    assertDescending(page3);
+    List<AuditEventPage> pages = fetchPages(query("svc:orders,svc:billing", null, 75), 75);
+    List<AuditEventView> items = pages.stream().flatMap(page -> page.items().stream()).toList();
 
-    Set<UUID> all = new HashSet<>();
-    page1.items().forEach(v -> all.add(v.id()));
-    page2.items().forEach(v -> all.add(v.id()));
-    page3.items().forEach(v -> all.add(v.id()));
-    assertThat(all).hasSize(250);
+    assertThat(pages).hasSize(4);
+    assertThat(items).hasSize(250);
+    assertThat(items).extracting(AuditEventView::actor).containsOnly("svc:billing", "svc:orders");
+    assertThat(allIds(pages)).hasSize(250);
+    pages.forEach(AuditEventQueryRepositoryIntegrationTest::assertDescending);
   }
 
   @Test
@@ -102,9 +95,7 @@ class AuditEventQueryRepositoryIntegrationTest {
     insertRow(idA, ts, "svc:billing", "invoice/1");
     insertRow(idB, ts, "svc:billing", "invoice/1");
 
-    AuditEventPage page =
-        repository.findPage(
-            new AuditEventQuery("svc:billing", null, WINDOW_FROM, WINDOW_TO, 10, null), null, null);
+    AuditEventPage page = repository.findPage(query("svc:billing", null, 10), null, null);
 
     assertThat(page.items()).extracting("id").containsExactly(idB, idA);
   }
@@ -112,54 +103,67 @@ class AuditEventQueryRepositoryIntegrationTest {
   @Test
   void findPage_concurrentInsertAtHeadIsNotVisitedByCursor() {
     seedRows("svc:billing", "invoice/4711", 200, WINDOW_FROM);
+    seedRows("svc:orders", "order/99", 200, WINDOW_FROM.plusSeconds(1));
 
     AuditEventPage page1 =
-        repository.findPage(
-            new AuditEventQuery("svc:billing", null, WINDOW_FROM, WINDOW_TO, 100, null),
-            null,
-            null);
+        repository.findPage(query("svc:billing,svc:orders", null, 100), null, null);
     assertThat(page1.items()).hasSize(100);
     AuditEventCursor cursor = AuditEventCursor.decode(page1.nextCursor());
+    assertThat(cursor.actors()).containsExactly("svc:billing", "svc:orders");
 
-    // Insert a row strictly newer than any seeded row but still within the window.
     UUID newId = UUID.randomUUID();
     Instant newTs = WINDOW_FROM.plusSeconds(60L * 60 * 24 * 6);
-    insertRow(newId, newTs, "svc:billing", "invoice/4711");
+    insertRow(newId, newTs, "svc:orders", "order/99");
 
     AuditEventPage page2 =
-        repository.findPage(
-            new AuditEventQuery(
-                cursor.actor(), cursor.resource(), cursor.from(), cursor.to(), 100, null),
-            cursor.ts(),
-            cursor.id());
+        repository.findPage(queryFromCursor(cursor, 100), cursor.ts(), cursor.id());
 
     assertThat(page2.items()).extracting("id").doesNotContain(newId);
   }
 
   @Test
-  void findPage_combinedActorAndResourceFilter_returnsIntersection() {
+  void findPage_combinedActorSetAndResourceFilter_returnsIntersection() {
     Instant base = WINDOW_FROM;
     insertRow(UUID.randomUUID(), base, "svc:billing", "invoice/1");
-    insertRow(UUID.randomUUID(), base.plusSeconds(1), "svc:billing", "invoice/2");
+    insertRow(UUID.randomUUID(), base.plusSeconds(1), "svc:orders", "invoice/1");
     insertRow(UUID.randomUUID(), base.plusSeconds(2), "svc:payments", "invoice/1");
-    insertRow(UUID.randomUUID(), base.plusSeconds(3), "svc:payments", "invoice/2");
+    insertRow(UUID.randomUUID(), base.plusSeconds(3), "svc:billing", "invoice/2");
 
     AuditEventPage page =
-        repository.findPage(
-            new AuditEventQuery("svc:billing", "invoice/1", WINDOW_FROM, WINDOW_TO, 10, null),
-            null,
-            null);
+        repository.findPage(query("svc:orders,svc:billing", "invoice/1", 10), null, null);
+
+    assertThat(page.items()).hasSize(2);
+    assertThat(page.items())
+        .extracting(AuditEventView::actor)
+        .containsOnly("svc:billing", "svc:orders");
+    assertThat(page.items()).extracting(AuditEventView::resource).containsOnly("invoice/1");
+  }
+
+  @Test
+  void findPage_actorMatchingIsCaseSensitive() {
+    insertRow(UUID.randomUUID(), WINDOW_FROM, "svc:billing", "invoice/1");
+    insertRow(UUID.randomUUID(), WINDOW_FROM.plusSeconds(1), "Svc:Billing", "invoice/1");
+
+    AuditEventPage page = repository.findPage(query("svc:billing", null, 10), null, null);
 
     assertThat(page.items()).hasSize(1);
     assertThat(page.items().get(0).actor()).isEqualTo("svc:billing");
-    assertThat(page.items().get(0).resource()).isEqualTo("invoice/1");
   }
 
   @Test
   void findPage_explainAnalyzeUsesNewActorIndex() {
     seedRows("svc:billing", "invoice/4711", 5000, WINDOW_FROM);
 
-    String plan = explain("svc:billing", null);
+    String plan = explainActors(List.of("svc:billing"), null);
+    assertThat(plan).contains("idx_audit_events_actor_ts_id");
+  }
+
+  @Test
+  void findPage_explainAnalyzeUsesNewActorIndexForMultiActor() {
+    seedRows("svc:billing", "invoice/4711", 2500, WINDOW_FROM);
+    seedRows("svc:orders", "invoice/4711", 2500, WINDOW_FROM.plusSeconds(1));
+
+    String plan = explainActors(List.of("svc:billing", "svc:orders"), null);
     assertThat(plan).contains("idx_audit_events_actor_ts_id");
   }
 
@@ -167,8 +171,41 @@ class AuditEventQueryRepositoryIntegrationTest {
   void findPage_explainAnalyzeUsesNewResourceIndex() {
     seedRows("svc:billing", "invoice/4711", 5000, WINDOW_FROM);
 
-    String plan = explain(null, "invoice/4711");
+    String plan = explainResource("invoice/4711");
     assertThat(plan).contains("idx_audit_events_resource_ts_id");
+  }
+
+  private List<AuditEventPage> fetchPages(AuditEventQuery firstQuery, int limit) {
+    List<AuditEventPage> pages = new ArrayList<>();
+    AuditEventPage page = repository.findPage(firstQuery, null, null);
+    pages.add(page);
+    while (page.hasMore()) {
+      AuditEventCursor cursor = AuditEventCursor.decode(page.nextCursor());
+      page = repository.findPage(queryFromCursor(cursor, limit), cursor.ts(), cursor.id());
+      pages.add(page);
+    }
+    return pages;
+  }
+
+  private static AuditEventQuery query(String actors, String resource, int limit) {
+    return new AuditEventQuery(actors, resource, WINDOW_FROM, WINDOW_TO, limit, null).validate();
+  }
+
+  private static AuditEventQuery queryFromCursor(AuditEventCursor cursor, int limit) {
+    return new AuditEventQuery(
+        null,
+        AuditActorSet.fromCanonical(cursor.actors()),
+        cursor.resource(),
+        cursor.from(),
+        cursor.to(),
+        limit,
+        null);
+  }
+
+  private static Set<UUID> allIds(List<AuditEventPage> pages) {
+    Set<UUID> all = new HashSet<>();
+    pages.forEach(page -> page.items().forEach(item -> all.add(item.id())));
+    return all;
   }
 
   private void seedRows(String actor, String resource, int count, Instant start) {
@@ -179,7 +216,7 @@ class AuditEventQueryRepositoryIntegrationTest {
                 batch.add(
                     new Object[] {
                       UUID.randomUUID(),
-                      Timestamp.from(start.plusSeconds(i)),
+                      Timestamp.from(start.plusSeconds(i * 2L)),
                       actor,
                       "invoice.created",
                       resource,
@@ -205,7 +242,38 @@ class AuditEventQueryRepositoryIntegrationTest {
         "{}");
   }
 
-  private String explain(String actor, String resource) {
+  private String explainActors(List<String> actors, String resource) {
+    return jdbcTemplate.execute(
+        (ConnectionCallback<String>)
+            connection -> {
+              java.sql.Array actorArray =
+                  connection.createArrayOf("text", actors.toArray(String[]::new));
+              try (PreparedStatement statement =
+                  connection.prepareStatement(
+                      "EXPLAIN (ANALYZE, BUFFERS)"
+                          + " SELECT id, event_timestamp, actor, action, resource, outcome, context"
+                          + "   FROM audit_events"
+                          + "  WHERE event_timestamp >= ?"
+                          + "    AND event_timestamp <  ?"
+                          + "    AND actor = ANY(CAST(? AS TEXT[]))"
+                          + "    AND (CAST(? AS TEXT) IS NULL OR resource = CAST(? AS TEXT))"
+                          + "  ORDER BY event_timestamp DESC, id DESC"
+                          + "  LIMIT 101")) {
+                statement.setTimestamp(1, Timestamp.from(WINDOW_FROM));
+                statement.setTimestamp(2, Timestamp.from(WINDOW_TO));
+                statement.setArray(3, actorArray);
+                statement.setString(4, resource);
+                statement.setString(5, resource);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                  return explainLines(resultSet);
+                }
+              } finally {
+                actorArray.free();
+              }
+            });
+  }
+
+  private String explainResource(String resource) {
     List<String> lines =
         jdbcTemplate.queryForList(
             "EXPLAIN (ANALYZE, BUFFERS)"
@@ -213,17 +281,21 @@ class AuditEventQueryRepositoryIntegrationTest {
                 + "   FROM audit_events"
                 + "  WHERE event_timestamp >= ?"
                 + "    AND event_timestamp <  ?"
-                + "    AND (CAST(? AS TEXT) IS NULL OR actor = CAST(? AS TEXT))"
-                + "    AND (CAST(? AS TEXT) IS NULL OR resource = CAST(? AS TEXT))"
+                + "    AND resource = ?"
                 + "  ORDER BY event_timestamp DESC, id DESC"
                 + "  LIMIT 101",
             String.class,
             Timestamp.from(WINDOW_FROM),
             Timestamp.from(WINDOW_TO),
-            actor,
-            actor,
-            resource,
             resource);
+    return String.join("\n", lines);
+  }
+
+  private static String explainLines(ResultSet resultSet) throws java.sql.SQLException {
+    List<String> lines = new ArrayList<>();
+    while (resultSet.next()) {
+      lines.add(resultSet.getString(1));
+    }
     return String.join("\n", lines);
   }
 

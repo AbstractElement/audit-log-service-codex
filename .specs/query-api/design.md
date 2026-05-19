@@ -15,11 +15,31 @@ GET /audit-events
 
 | Param      | In    | Type            | Required             | Notes                                                |
 |------------|-------|-----------------|----------------------|------------------------------------------------------|
-| `actor`    | query | string          | One of actor/resource required | Exact match; case-sensitive.                  |
+| `actor`    | query | string          | One of actor/resource required | Comma-separated actor set with 1-10 values; exact matches are case-sensitive. |
 | `resource` | query | string          | One of actor/resource required | Exact match; case-sensitive.                  |
 | `from`     | query | ISO-8601 UTC    | yes                  | Inclusive lower bound on `event_timestamp`.          |
 | `to`       | query | ISO-8601 UTC    | yes                  | Exclusive upper bound on `event_timestamp`.          |
 | `limit`    | query | integer         | no (default 100)     | `1 ≤ limit ≤ 500`.                                   |
+
+Examples:
+
+```text
+GET /audit-events?actor=svc:billing&from=2026-04-26T00:00:00Z&to=2026-05-03T00:00:00Z
+GET /audit-events?actor=svc:billing,svc:orders&resource=invoice/4711&from=2026-04-26T00:00:00Z&to=2026-05-03T00:00:00Z
+```
+
+`actor` parsing is intentionally simple and deterministic:
+
+- Split on comma.
+- Trim surrounding whitespace around each token.
+- Reject empty tokens after trimming.
+- Deduplicate actor values after trimming.
+- Sort the deduplicated actor set lexicographically before validation,
+  cursor encoding, and repository access.
+
+The actor-set semantics are order-insensitive: `actor=a,b` and `actor=b,a`
+mean the same query. Actor values containing commas are not supported because
+comma is the reserved separator.
 
 ### Request — subsequent page (cursor)
 
@@ -120,26 +140,30 @@ Opaque base64-url of a small JSON envelope:
 {
   "ts":       "2026-05-03T14:22:09.871Z",
   "id":       "5b9c…-uuid",
-  "actor":    "svc:billing",      // null if not in original filter
+  "actors":   ["svc:billing", "svc:orders"], // null if no actor filter
   "resource": null,
   "from":     "2026-04-26T00:00:00Z",
   "to":       "2026-05-03T00:00:00Z",
-  "v":        1                    // schema version for forward compat
+  "v":        2                    // schema version for forward compat
 }
 ```
 
 - **Encoding**: `Base64.getUrlEncoder().withoutPadding().encodeToString(json)`.
-- **Decoding**: `400` on any parse error or unknown `v` (AC-2.5).
-- **Signing/TTL**: not signed and not expiring in v1. The endpoint is
-  read-only and currently unauthenticated; cursor protection is limited to
-  parseability, supported version, and validation of the decoded envelope.
+- **Decoding**: `400` on any parse error or unknown `v` (AC-2.5). Version
+  `2` is the cursor shape for actor sets; older scalar-actor cursor shapes are
+  rejected as unsupported.
+- **Signing/TTL**: not signed and not expiring in this API version. The
+  endpoint is read-only and currently unauthenticated; cursor protection is
+  limited to parseability, supported version, and validation of the decoded
+  envelope.
 - **Pinned filters**: every cursor request decodes the envelope and reapplies
-  `actor`, `resource`, `from`, `to` from inside it; client-supplied filter
+  `actors`, `resource`, `from`, `to` from inside it; client-supplied filter
   params alongside `cursor` cause a `400` (AC-2.4).
 - **Envelope validation**: decoded cursors must contain at least one
-  pinned `actor`/`resource`, valid `from`/`to`, `from < to`, and a window no
-  wider than 7 days. This keeps cursor requests bounded even though the cursor
-  is unsigned.
+  pinned `actors`/`resource`, valid `from`/`to`, `from < to`, and a window no
+  wider than 7 days. If `actors` is present, it must contain 1-10 non-empty
+  actor values in canonical sorted order. This keeps cursor requests bounded
+  even though the cursor is unsigned.
 
 ### Page assembly — `LIMIT n+1`
 
@@ -160,7 +184,7 @@ Adding the keyset compare to the WHERE clause:
 ```sql
 WHERE  event_timestamp >= :from
   AND  event_timestamp <  :to
-  AND  (:actor    IS NULL OR actor    = :actor)
+  AND  (:actors   IS NULL OR actor    = ANY(:actors))
   AND  (:resource IS NULL OR resource = :resource)
   AND  (
         :cursor_ts IS NULL
@@ -174,6 +198,11 @@ LIMIT  :limit + 1;
 Written as `(event_timestamp, id) < (:cursor_ts, :cursor_id)` in row-form
 for clarity; the expanded form above is what we'll emit because PostgreSQL
 plans it more reliably against the composite index.
+
+For multi-actor requests, `:actors` is the canonical sorted actor array from
+the Application layer. `resource`, when present, remains an AND filter over
+the actor set: rows must satisfy both `actor = ANY(:actors)` and
+`resource = :resource`.
 
 ## Indexes
 
@@ -190,6 +219,14 @@ CREATE INDEX idx_audit_events_resource_ts_id
 Including `id` as the trailing key column lets the keyset compare be served
 entirely from the index without a heap visit per row to resolve same-instant
 ties — the dominant cost driver for AC-3.1.
+
+The actor index is also the index-backed path for AC-3.4 multi-actor requests:
+PostgreSQL can constrain the leading `actor` key with `actor = ANY(:actors)`
+for up to ten actor values, then apply the same timestamp/id keyset bounds.
+Because multi-actor results must be globally ordered by
+`event_timestamp DESC, id DESC` across all selected actors, the implementation
+must verify the chosen plan with `EXPLAIN ANALYZE` and keep the result set
+bounded by the 7-day window and `LIMIT limit + 1`.
 
 ### Indexes to drop
 
@@ -211,21 +248,22 @@ The new query endpoint never uses it (AC-1.4 forbids time-only queries), but
 it remains available for ad-hoc operational reads. Removing it is a
 follow-up if and when ad-hoc usage is confirmed absent.
 
-### Combined `actor + resource` queries
+### Combined actor-set + resource queries
 
 No combined `(actor, resource, event_timestamp, id)` index. PostgreSQL is
-expected to pick the more selective single-column index — typically `actor`
-— and filter `resource` from the heap. Two reasons to defer:
+expected to use `idx_audit_events_actor_ts_id` for actor-only, multi-actor,
+and actor-set + resource queries, then filter `resource` from the heap when a
+resource is supplied. Two reasons to defer:
 
 1. Combined queries are rare relative to single-filter ones; an extra index
    adds write amplification on every ingest.
-2. Selectivity of `actor` at 50M rows is high enough in expected workloads
-   to keep the heap-filter cost well under p95.
+2. Selectivity of a capped actor set of at most ten values is high enough in
+   expected workloads to keep the heap-filter cost well under p95.
 
 This **must be verified** by T9 with `EXPLAIN ANALYZE` against a synthetic
-50M-row dataset before sign-off (AC-3.2). If selectivity proves insufficient
-for some hot actor, add a partial index targeting that actor rather than a
-global combined index.
+50M-row dataset before sign-off (AC-3.2, AC-3.4). If selectivity proves
+insufficient for hot actor sets, add a specialized follow-up index rather than
+guessing at one in the initial design.
 
 ### T9 performance verification
 
@@ -233,9 +271,9 @@ T9 is the final gate before merging the feature to `master`.
 
 - Generate or load a synthetic 50M-row `audit_events` dataset with realistic
   actor/resource selectivity and timestamps spanning multiple windows.
-- Run `EXPLAIN ANALYZE` for actor-only, resource-only, and combined
-  actor/resource compliant requests. Plans must show the new V3 keyset
-  indexes (`idx_audit_events_actor_ts_id` or
+- Run `EXPLAIN ANALYZE` for actor-only, multi-actor, resource-only, and
+  combined actor-set/resource compliant requests. Plans must show the new V3
+  keyset indexes (`idx_audit_events_actor_ts_id` or
   `idx_audit_events_resource_ts_id`) on the hot table.
 - Measure server-side p95 latency for compliant first-page and cursor-page
   requests at representative `limit` values, including `100` and `500`.
@@ -249,13 +287,14 @@ covered by unit tests independent of Spring MVC.
 | Rule | Source AC | Failure mode |
 |------|-----------|--------------|
 | Either `actor` or `resource` non-blank (when no cursor)        | AC-1.4 | `400` `MISSING_FILTER` |
+| `actor` splits into 1-10 non-empty trimmed values              | AC-1.9, AC-1.10, AC-1.11, AC-1.12 | `400` `INVALID_ACTOR_SET` |
 | `from` and `to` both supplied (when no cursor)                 | AC-1.3 | `400` `MISSING_PARAMETER`, `field` set to the first missing parameter |
 | `from`, `to` parse as ISO-8601 instants that bind to UTC       | AC-1.7 | `400` `INVALID_TIMESTAMP` |
 | `from < to`                                                    | AC-1.5 | `400` `INVALID_TIME_WINDOW` |
 | `to − from ≤ Duration.ofDays(7)`                               | AC-1.6 | `400` `WINDOW_TOO_LARGE` |
 | `1 ≤ limit ≤ 500` on first-page and cursor requests            | AC-2.6, AC-2.7 | `400` `LIMIT_OUT_OF_RANGE` |
-| `cursor` parses as base64-url JSON, version 1                  | AC-2.5 | `400` `INVALID_CURSOR` |
-| Decoded cursor envelope contains valid pinned filters/window   | AC-2.5 | `400` `INVALID_CURSOR` |
+| `cursor` parses as base64-url JSON, version 2                  | AC-2.5, AC-2.9 | `400` `INVALID_CURSOR` |
+| Decoded cursor envelope contains valid pinned filters/window, including a valid canonical actor set when `actors` is present | AC-2.5, AC-2.9 | `400` `INVALID_CURSOR` |
 | Mutual exclusion: `cursor` ⇔ none of `actor`/`resource`/`from`/`to` | AC-2.4 | `400` `CONFLICTING_PARAMETERS` |
 
 Spring MVC binding handles timestamp parse failures at the API boundary.
@@ -284,7 +323,7 @@ HTTP request
 │ Application layer  (com.auditlog.application)           │
 │  Records / value types:                                 │
 │   AuditEventQuery       (validated request)             │
-│   AuditEventCursor      (ts, id, filters, version)      │
+│   AuditEventCursor      (ts, id, actor set, filters, v) │
 │   AuditEventPage        (items, nextCursor, hasMore)    │
 │  Service:                                               │
 │   AuditEventQueryService                                │
@@ -317,6 +356,11 @@ Domain layer (com.auditlog.domain) is untouched:
   `AuditEventQuery`. The new type carries the cursor and drops `offset`.
   Replacing rather than evolving avoids the temptation of a hybrid
   cursor/offset shape, which would violate AC-2.4.
+- `AuditEventQuery.actor` becomes a canonical actor set rather than a scalar
+  string: absent when no actor filter exists, otherwise a sorted,
+  deduplicated list with 1-10 values.
+- `AuditEventCursor` stores `actors` as the same canonical actor set and uses
+  cursor version `2`.
 - `AuditEventRepository.find(...)` is **replaced** by
   `AuditEventRepository.findPage(AuditEventQuery, Instant, UUID)` returning
   `AuditEventPage`. Single port method change, single integration test
@@ -327,17 +371,18 @@ Domain layer (com.auditlog.domain) is untouched:
 ### Test coverage map (AC-5.4)
 
 - Unit tests
-  - `AuditEventCursorTest` — round-trip encode/decode, version mismatch,
-    malformed input.
+  - `AuditEventCursorTest` — round-trip encode/decode with no actors,
+    one actor, and multiple actors; version mismatch; malformed input.
   - `AuditEventQueryValidationTest` — every row of the *Validation rules*
-    table.
+    table, including trim/dedupe, empty actor tokens, and the 10-actor cap.
 - Integration test
   - `AuditEventQueryRepositoryIntegrationTest` (Testcontainers PG 16) —
     seed N rows, page through with cursor across ≥ 3 pages, interleave
     concurrent inserts at the head, assert no row is seen twice and no row is
-    skipped.
+    skipped, and cover actor-set + resource filtering.
   - T9 performance verification — synthetic 50M-row dataset, server-side p95
-    ≤ 300ms, and EXPLAIN ANALYZE proving the new keyset indexes are used.
+    ≤ 300ms, and EXPLAIN ANALYZE proving the new keyset indexes are used for
+    single-actor, multi-actor, resource-only, and actor-set + resource shapes.
 - ArchUnit
   - Explicit assertions confirm `AuditEventQuery`, `AuditEventCursor`, and
     `AuditEventPage` live under `com.auditlog.application`.
